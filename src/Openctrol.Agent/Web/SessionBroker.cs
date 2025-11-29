@@ -3,7 +3,7 @@ using ILogger = Openctrol.Agent.Logging.ILogger;
 
 namespace Openctrol.Agent.Web;
 
-public sealed class SessionBroker : ISessionBroker
+public sealed class SessionBroker : ISessionBroker, IDisposable
 {
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
@@ -44,7 +44,7 @@ public sealed class SessionBroker : ISessionBroker
             };
 
             _sessions[sessionId] = session;
-            _logger.Info($"Started desktop session {sessionId} for HA ID: {haId}");
+            _logger.Info($"[Session] Started desktop session {sessionId} for HA ID: {haId}");
             return session;
         }
     }
@@ -72,7 +72,7 @@ public sealed class SessionBroker : ISessionBroker
             {
                 session.IsActive = false;
                 _sessions.Remove(sessionId);
-                _logger.Info($"Ended desktop session {sessionId}");
+                _logger.Info($"[Session] Ended desktop session {sessionId}");
             }
         }
     }
@@ -105,9 +105,14 @@ public sealed class SessionBroker : ISessionBroker
 
             if (expiredSessions.Count > 0)
             {
-                _logger.Info($"Cleaned up {expiredSessions.Count} expired sessions");
+                _logger.Info($"[Session] Cleaned up {expiredSessions.Count} expired sessions");
             }
         }
+    }
+
+    public void Dispose()
+    {
+        _cleanupTimer?.Dispose();
     }
 }
 

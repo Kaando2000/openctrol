@@ -93,8 +93,11 @@ public sealed class ControlApiServer : IControlApiServer
         builder.Services.AddEndpointsApiExplorer();
 
         _app = builder.Build();
+        
+        // Enable WebSocket support - required for /ws/desktop endpoint
+        _app.UseWebSockets();
 
-        // Health endpoint
+        // Health endpoint (no auth required - public health check)
         _app.MapGet("/api/v1/health", () =>
         {
             var config = _configManager.GetConfig();
@@ -130,6 +133,13 @@ public sealed class ControlApiServer : IControlApiServer
         // Create desktop session
         _app.MapPost("/api/v1/sessions/desktop", async (HttpContext context) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_sessionBroker == null || _securityManager == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Session broker or security manager not available" }, statusCode: 503);
@@ -149,7 +159,7 @@ public sealed class ControlApiServer : IControlApiServer
                 // Validate HA ID is allowed
                 if (!_securityManager.IsHaAllowed(request.HaId))
                 {
-                    _logger.Warn($"Rejected session creation request from unauthorized HA ID: {request.HaId}");
+                    _logger.Warn($"[Security] Rejected session creation request from unauthorized HA ID: {request.HaId}");
                     return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "HA ID not allowed" }, statusCode: 401);
                 }
 
@@ -173,14 +183,21 @@ public sealed class ControlApiServer : IControlApiServer
             }
             catch (Exception ex)
             {
-                _logger.Error("Error creating desktop session", ex);
+                _logger.Error($"[Session] Error creating desktop session: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "session_creation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
         // End desktop session
-        _app.MapPost("/api/v1/sessions/desktop/{id}/end", (string id) =>
+        _app.MapPost("/api/v1/sessions/desktop/{id}/end", (HttpContext context, string id) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_sessionBroker == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Session broker not available" }, statusCode: 503);
@@ -194,12 +211,12 @@ public sealed class ControlApiServer : IControlApiServer
             try
             {
                 _sessionBroker.EndSession(id);
-                _logger.Info($"Desktop session ended: {id}");
+                _logger.Info($"[Session] Desktop session ended: {id}");
                 return Results.Ok();
             }
             catch (Exception ex)
             {
-                _logger.Error($"Error ending session {id}", ex);
+                _logger.Error($"[Session] Error ending session {id}: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "session_end_failed", Details = ex.Message }, statusCode: 500);
             }
         });
@@ -207,6 +224,13 @@ public sealed class ControlApiServer : IControlApiServer
         // Power control
         _app.MapPost("/api/v1/power", async (HttpContext context) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_powerManager == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Power manager not available" }, statusCode: 503);
@@ -227,11 +251,13 @@ public sealed class ControlApiServer : IControlApiServer
                 switch (action)
                 {
                     case "restart":
-                        _logger.Warn($"System restart requested via API");
+                        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                        _logger.Warn($"[Power] System restart requested via API from {clientIp}");
                         _powerManager.Restart();
                         return Results.Ok();
                     case "shutdown":
-                        _logger.Warn($"System shutdown requested via API");
+                        var clientIp2 = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                        _logger.Warn($"[Power] System shutdown requested via API from {clientIp2}");
                         _powerManager.Shutdown();
                         return Results.Ok();
                     default:
@@ -240,14 +266,21 @@ public sealed class ControlApiServer : IControlApiServer
             }
             catch (Exception ex)
             {
-                _logger.Error("Error handling power request", ex);
+                _logger.Error($"[Power] Error handling power request: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "power_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
         // Audio state
-        _app.MapGet("/api/v1/audio/state", () =>
+        _app.MapGet("/api/v1/audio/state", (HttpContext context) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_audioManager == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
@@ -281,7 +314,7 @@ public sealed class ControlApiServer : IControlApiServer
             }
             catch (Exception ex)
             {
-                _logger.Error("Error getting audio state", ex);
+                _logger.Error($"[Audio] Error getting audio state: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "audio_state_failed", Details = ex.Message }, statusCode: 500);
             }
         });
@@ -289,6 +322,13 @@ public sealed class ControlApiServer : IControlApiServer
         // Set device volume
         _app.MapPost("/api/v1/audio/device", async (HttpContext context) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_audioManager == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
@@ -317,11 +357,11 @@ public sealed class ControlApiServer : IControlApiServer
                     try
                     {
                         _audioManager.SetDefaultOutputDevice(request.DeviceId);
-                        _logger.Info($"Device {request.DeviceId} set as default output device");
+                        _logger.Info($"[Audio] Device {request.DeviceId} set as default output device");
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error($"Error setting default device: {request.DeviceId}", ex);
+                        _logger.Error($"[Audio] Error setting default device {request.DeviceId}: {ex.Message}", ex);
                         return Results.Json(new ErrorResponse { Error = "default_device_change_failed", Details = ex.Message }, statusCode: 500);
                     }
                 }
@@ -330,12 +370,12 @@ public sealed class ControlApiServer : IControlApiServer
             }
             catch (ArgumentException ex)
             {
-                _logger.Warn($"Invalid audio device request: {ex.Message}");
+                _logger.Warn($"[Audio] Invalid audio device request: {ex.Message}");
                 return Results.Json(new ErrorResponse { Error = "invalid_audio_device_request", Details = ex.Message }, statusCode: 400);
             }
             catch (Exception ex)
             {
-                _logger.Error("Error setting device volume", ex);
+                _logger.Error($"[Audio] Error setting device volume: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "audio_device_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
@@ -343,6 +383,13 @@ public sealed class ControlApiServer : IControlApiServer
         // Set session volume
         _app.MapPost("/api/v1/audio/session", async (HttpContext context) =>
         {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
             if (_audioManager == null)
             {
                 return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
@@ -371,11 +418,11 @@ public sealed class ControlApiServer : IControlApiServer
                     try
                     {
                         _audioManager.SetSessionOutputDevice(request.SessionId, request.OutputDeviceId);
-                        _logger.Info($"Session {request.SessionId} routed to device {request.OutputDeviceId}");
+                        _logger.Info($"[Audio] Session {request.SessionId} routed to device {request.OutputDeviceId}");
                     }
                     catch (Exception ex)
                     {
-                        _logger.Error($"Error routing session {request.SessionId} to device {request.OutputDeviceId}", ex);
+                        _logger.Error($"[Audio] Error routing session {request.SessionId} to device {request.OutputDeviceId}: {ex.Message}", ex);
                         return Results.Json(new ErrorResponse { Error = "session_device_change_failed", Details = ex.Message }, statusCode: 500);
                     }
                 }
@@ -384,12 +431,12 @@ public sealed class ControlApiServer : IControlApiServer
             }
             catch (ArgumentException ex)
             {
-                _logger.Warn($"Invalid audio session request: {ex.Message}");
+                _logger.Warn($"[Audio] Invalid audio session request: {ex.Message}");
                 return Results.Json(new ErrorResponse { Error = "invalid_audio_session_request", Details = ex.Message }, statusCode: 400);
             }
             catch (Exception ex)
             {
-                _logger.Error("Error setting session volume", ex);
+                _logger.Error($"[Audio] Error setting session volume: {ex.Message}", ex);
                 return Results.Json(new ErrorResponse { Error = "audio_session_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
@@ -451,17 +498,23 @@ public sealed class ControlApiServer : IControlApiServer
             await handler.HandleAsync();
         });
 
-        // Start the server asynchronously (fire-and-forget with error handling)
+        // Start the server asynchronously and observe failures
         _runTask = _app.RunAsync();
         _runTask.ContinueWith(task =>
         {
             if (task.IsFaulted)
             {
-                _logger.Error("API server encountered an error", task.Exception);
+                var ex = task.Exception?.GetBaseException();
+                _logger.Error($"[API] Server encountered a fatal error on port {config.HttpPort}: {ex?.Message}", ex);
+                // Note: In a production scenario, this might trigger service restart
+                // The host should monitor this and handle accordingly
             }
         }, TaskContinuationOptions.OnlyOnFaulted);
 
-        _logger.Info($"API server listening on port {config.HttpPort}");
+        // Note: RunAsync() is fire-and-forget, so we can't immediately detect port binding failures
+        // However, the continuation above will log any failures that occur
+        // For immediate port conflicts, Kestrel will log errors that we can observe
+        _logger.Info($"[API] Server starting on port {config.HttpPort} (check logs for binding errors)");
     }
 
     public async Task StopAsync()
@@ -476,6 +529,52 @@ public sealed class ControlApiServer : IControlApiServer
         // Dispose certificate when server stops
         _certificate?.Dispose();
         _certificate = null;
+    }
+
+    private IResult? CheckAuthentication(HttpContext context)
+    {
+        var config = _configManager.GetConfig();
+        
+        // If no API key is configured, allow all requests (backward compatibility / development)
+        if (string.IsNullOrEmpty(config.ApiKey))
+        {
+            return null; // No auth required
+        }
+
+        // Check for API key in header (X-Openctrol-Key or Authorization: Bearer <key>)
+        string? providedKey = null;
+        
+        // Try X-Openctrol-Key header first
+        if (context.Request.Headers.TryGetValue("X-Openctrol-Key", out var headerValue))
+        {
+            providedKey = headerValue.ToString();
+        }
+        // Try Authorization: Bearer <key>
+        else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
+        {
+            var authValue = authHeader.ToString();
+            if (authValue.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            {
+                providedKey = authValue.Substring(7).Trim();
+            }
+        }
+
+        if (string.IsNullOrEmpty(providedKey))
+        {
+            _logger.Warn($"[Auth] Unauthenticated request to {context.Request.Path} from {context.Connection.RemoteIpAddress}");
+            return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "Missing or invalid credentials" }, statusCode: 401);
+        }
+
+        // Use constant-time comparison to prevent timing attacks
+        if (!CryptographicOperations.FixedTimeEquals(
+            System.Text.Encoding.UTF8.GetBytes(config.ApiKey),
+            System.Text.Encoding.UTF8.GetBytes(providedKey)))
+        {
+            _logger.Warn($"[Auth] Invalid API key provided for {context.Request.Path} from {context.Connection.RemoteIpAddress}");
+            return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "Missing or invalid credentials" }, statusCode: 401);
+        }
+
+        return null; // Authentication successful
     }
 
     private static string DecryptCertPassword(string encryptedPassword)

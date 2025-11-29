@@ -46,7 +46,7 @@ public sealed class InputDispatcher
             }
             catch (Exception ex)
             {
-                _logger.Error("Error dispatching pointer event", ex);
+                _logger.Error($"[Input] Error dispatching pointer event: {ex.Message}", ex);
             }
         }
     }
@@ -55,6 +55,7 @@ public sealed class InputDispatcher
     {
         lock (_lock)
         {
+            KeyModifiers modifiersToRelease = KeyModifiers.None;
             try
             {
                 switch (evt.Kind)
@@ -62,6 +63,7 @@ public sealed class InputDispatcher
                     case KeyboardEventKind.KeyDown:
                         if (evt.KeyCode.HasValue)
                         {
+                            modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
                             SendKeyDown(evt.KeyCode.Value, evt.Modifiers);
                         }
                         break;
@@ -76,6 +78,7 @@ public sealed class InputDispatcher
                     case KeyboardEventKind.Text:
                         if (!string.IsNullOrEmpty(evt.Text))
                         {
+                            modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
                             SendText(evt.Text, evt.Modifiers);
                         }
                         break;
@@ -83,8 +86,50 @@ public sealed class InputDispatcher
             }
             catch (Exception ex)
             {
-                _logger.Error("Error dispatching keyboard event", ex);
+                _logger.Error($"[Input] Error dispatching keyboard event: {ex.Message}", ex);
+                // Release any pressed modifiers to prevent stuck keys
+                if (modifiersToRelease != KeyModifiers.None)
+                {
+                    try
+                    {
+                        ReleaseModifiers(modifiersToRelease);
+                    }
+                    catch (Exception releaseEx)
+                    {
+                        _logger.Error($"[Input] Error releasing modifiers after keyboard event failure: {releaseEx.Message}", releaseEx);
+                    }
+                }
             }
+        }
+    }
+
+    private void ReleaseModifiers(KeyModifiers modifiers)
+    {
+        var inputs = new List<INPUT>();
+
+        // Release modifier keys in reverse order of how they're pressed in SendKeyDown
+        // Press order: Ctrl → Alt → Shift → Win
+        // Release order: Win → Shift → Alt → Ctrl
+        if ((modifiers & KeyModifiers.Win) != 0)
+        {
+            inputs.Add(CreateKeyInput(VK_LWIN, false));
+        }
+        if ((modifiers & KeyModifiers.Shift) != 0)
+        {
+            inputs.Add(CreateKeyInput(VK_SHIFT, false));
+        }
+        if ((modifiers & KeyModifiers.Alt) != 0)
+        {
+            inputs.Add(CreateKeyInput(VK_MENU, false));
+        }
+        if ((modifiers & KeyModifiers.Ctrl) != 0)
+        {
+            inputs.Add(CreateKeyInput(VK_CONTROL, false));
+        }
+
+        if (inputs.Count > 0)
+        {
+            SendInput((uint)inputs.Count, inputs.ToArray(), Marshal.SizeOf<INPUT>());
         }
     }
 
@@ -110,7 +155,76 @@ public sealed class InputDispatcher
 
     private void SetCursorPosition(int x, int y)
     {
-        SetCursorPos(x, y);
+        // Use SendInput with MOUSEEVENTF.ABSOLUTE for proper multi-monitor and DPI support
+        // Coordinates from client are relative to the monitor being streamed
+        // We'll use the primary monitor as reference and convert to virtual desktop coordinates
+        
+        try
+        {
+            // Get virtual desktop bounds (all monitors combined)
+            var virtualDesktop = System.Windows.Forms.Screen.AllScreens;
+            if (virtualDesktop.Length == 0)
+            {
+                _logger.Warn("[Input] No screens available for absolute mouse positioning");
+                return;
+            }
+
+            // Get primary monitor bounds
+            var primaryScreen = System.Windows.Forms.Screen.PrimaryScreen;
+            if (primaryScreen == null)
+            {
+                primaryScreen = virtualDesktop[0];
+            }
+
+            // Client coordinates are relative to the streamed monitor (assumed to be primary for now)
+            // Convert to virtual desktop coordinates
+            var virtualX = primaryScreen.Bounds.X + x;
+            var virtualY = primaryScreen.Bounds.Y + y;
+
+            // Get virtual desktop dimensions
+            var minX = virtualDesktop.Min(s => s.Bounds.Left);
+            var minY = virtualDesktop.Min(s => s.Bounds.Top);
+            var maxX = virtualDesktop.Max(s => s.Bounds.Right);
+            var maxY = virtualDesktop.Max(s => s.Bounds.Bottom);
+            var virtualWidth = maxX - minX;
+            var virtualHeight = maxY - minY;
+
+            if (virtualWidth <= 0 || virtualHeight <= 0)
+            {
+                _logger.Warn("[Input] Invalid virtual desktop dimensions");
+                return;
+            }
+
+            // Scale to 0-65535 range as required by SendInput with MOUSEEVENTF.ABSOLUTE
+            // Normalize coordinates relative to virtual desktop
+            var normalizedX = (int)(((double)(virtualX - minX) / virtualWidth) * 65535);
+            var normalizedY = (int)(((double)(virtualY - minY) / virtualHeight) * 65535);
+
+            // Clamp to valid range
+            normalizedX = Math.Max(0, Math.Min(65535, normalizedX));
+            normalizedY = Math.Max(0, Math.Min(65535, normalizedY));
+
+            var input = new INPUT
+            {
+                type = INPUT_TYPE.MOUSE,
+                u = new InputUnion
+                {
+                    mi = new MOUSEINPUT
+                    {
+                        dx = normalizedX,
+                        dy = normalizedY,
+                        dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE,
+                        dwExtraInfo = IntPtr.Zero
+                    }
+                }
+            };
+
+            SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[Input] Error in absolute mouse positioning: {ex.Message}", ex);
+        }
     }
 
     private void SendMouseButton(MouseButton button, bool down)
@@ -336,8 +450,6 @@ public sealed class InputDispatcher
     [DllImport("user32.dll", SetLastError = true)]
     private static extern uint SendInput(uint nInputs, INPUT[] pInputs, int cbSize);
 
-    [DllImport("user32.dll")]
-    private static extern bool SetCursorPos(int x, int y);
 
     [DllImport("user32.dll")]
     private static extern short VkKeyScanEx(char ch, IntPtr hkl);

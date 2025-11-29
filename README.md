@@ -20,10 +20,7 @@ A Windows service that provides remote desktop control, power management, and au
   - Binary frame streaming (JPEG encoded)
   - Low-latency input handling
   - Session-based authentication
-
-- **Discovery**
-  - mDNS service announcement
-  - Automatic LAN discovery
+  - Session expiry enforcement
 
 ## Requirements
 
@@ -86,7 +83,8 @@ Example configuration:
   "CertPath": "",
   "CertPasswordEncrypted": "",
   "TargetFps": 30,
-  "AllowedHaIds": []
+  "AllowedHaIds": [],
+  "ApiKey": ""
 }
 ```
 
@@ -135,9 +133,11 @@ dotnet test
 ## Security
 
 - Session-based authentication with token expiration
+- REST API authentication via API key (optional, configurable)
 - Rate limiting on token validation failures
-- HA ID allowlist support
+- HA ID allowlist support (deny-all by default when empty)
 - HTTPS support with certificate configuration
+- Secure by default: empty allowlist denies all access
 
 ## License
 

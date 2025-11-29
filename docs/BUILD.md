@@ -51,7 +51,6 @@ The project uses the following NuGet packages:
 - `Microsoft.Extensions.Hosting.WindowsServices` - Windows Service hosting
 - `Microsoft.AspNetCore.App` - Web framework (implicit)
 - `NAudio` - Audio management
-- `Zeroconf` - mDNS discovery
 - `System.Drawing.Common` - Image encoding
 
 All dependencies are automatically restored during build.

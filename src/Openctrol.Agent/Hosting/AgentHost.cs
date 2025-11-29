@@ -78,12 +78,20 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             // Start API server if available
             if (_apiServer != null)
             {
-                _apiServer.Start();
-                _logger.Info("API server started");
+                try
+                {
+                    _apiServer.Start();
+                    _logger.Info("[API] Server started");
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("[API] Failed to start API server - this is a fatal error", ex);
+                    throw; // Fail startup if API server cannot start
+                }
             }
             else
             {
-                _logger.Warn("API server not available (stub)");
+                _logger.Warn("[API] Server not available (stub)");
             }
 
 

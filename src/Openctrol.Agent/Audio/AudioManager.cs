@@ -61,10 +61,11 @@ public sealed class AudioManager : IAudioManager
                             // Get the device ID this session is routed to
                             // Note: Windows audio APIs don't provide a reliable way to query which device
                             // a session is currently routed to. We can set routing via SetSessionOutputDevice(),
-                            // but GetState() cannot accurately reflect the actual routing. For now, we
-                            // report the default device ID, but clients should not rely on this field
-                            // to determine actual routing - it's informational only.
-                            var sessionDeviceId = defaultDeviceId;
+                            // but GetState() cannot accurately reflect the actual routing.
+                            // We return an empty string to indicate the routing is unknown rather than
+                            // misleadingly reporting the default device. Clients should not rely on this
+                            // field to determine actual routing - it's informational only.
+                            var sessionDeviceId = ""; // Unknown - Windows API limitation
                             
                             sessions.Add(new AudioSessionInfo
                             {

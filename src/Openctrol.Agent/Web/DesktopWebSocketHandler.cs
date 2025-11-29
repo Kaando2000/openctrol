@@ -63,36 +63,39 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             // Subscribe to frames
             _remoteDesktopEngine.RegisterFrameSubscriber(this);
             _isSubscribed = true;
-            _logger.Info($"WebSocket client connected for session {_sessionId}");
+            _logger.Info($"[WebSocket] Client connected for session {_sessionId}");
 
             // Start frame sending task
             var sendTask = SendFramesAsync(_cancellationTokenSource.Token);
             
-            // Start receiving messages
-            var receiveTask = ReceiveMessagesAsync();
+            // Start receiving messages (with cancellation support)
+            var receiveTask = ReceiveMessagesAsync(_cancellationTokenSource.Token);
             
-            // Wait for either task to complete
-            await Task.WhenAny(receiveTask, sendTask);
+            // Start session expiry check task
+            var expiryCheckTask = CheckSessionExpiryAsync(_cancellationTokenSource.Token);
             
-            // Cancel to signal both tasks to stop
+            // Wait for any task to complete (receive, send, or expiry check)
+            await Task.WhenAny(receiveTask, sendTask, expiryCheckTask);
+            
+            // Cancel to signal all tasks to stop
             _cancellationTokenSource.Cancel();
             
-            // Wait for both tasks to complete to ensure clean shutdown
+            // Wait for all tasks to complete to ensure clean shutdown
             // This prevents race conditions where one task might still be accessing
             // the WebSocket or channel while cleanup is happening
             try
             {
-                await Task.WhenAll(receiveTask, sendTask);
+                await Task.WhenAll(receiveTask, sendTask, expiryCheckTask);
             }
             catch (Exception ex)
             {
                 // Log but don't throw - we're shutting down anyway
-                _logger.Error($"Error waiting for tasks to complete in session {_sessionId}", ex);
+                _logger.Error($"[WebSocket] Error waiting for tasks to complete in session {_sessionId}", ex);
             }
         }
         catch (Exception ex)
         {
-            _logger.Error($"Error in WebSocket handler for session {_sessionId}", ex);
+            _logger.Error($"[WebSocket] Error in handler for session {_sessionId}", ex);
         }
         finally
         {
@@ -112,7 +115,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
 
             _sessionBroker.EndSession(_sessionId);
             _cancellationTokenSource.Dispose();
-            _logger.Info($"WebSocket client disconnected for session {_sessionId}");
+            _logger.Info($"[WebSocket] Client disconnected for session {_sessionId}");
         }
     }
 
@@ -177,12 +180,12 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                 }
                 catch (System.Net.WebSockets.WebSocketException ex)
                 {
-                    _logger.Error("WebSocket error sending frame", ex);
+                    _logger.Error($"[WebSocket] WebSocket error sending frame in session {_sessionId}: {ex.Message}", ex);
                     break;
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error("Error sending frame to WebSocket client", ex);
+                    _logger.Error($"[WebSocket] Error sending frame in session {_sessionId}: {ex.Message}", ex);
                     break;
                 }
                 finally
@@ -197,7 +200,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error in frame sending loop", ex);
+            _logger.Error($"[WebSocket] Error in frame sending loop for session {_sessionId}", ex);
         }
         finally
         {
@@ -237,33 +240,101 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             CancellationToken.None);
     }
 
-    private async Task ReceiveMessagesAsync()
+    private async Task ReceiveMessagesAsync(CancellationToken cancellationToken)
     {
         var buffer = new byte[4096];
-        while (_webSocket.State == WebSocketState.Open)
+        try
         {
-            var result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
-
-            if (result.MessageType == WebSocketMessageType.Close)
+            while (_webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
-                break;
-            }
+                WebSocketReceiveResult result;
+                try
+                {
+                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                    break;
+                }
+                catch (System.Net.WebSockets.WebSocketException ex)
+                {
+                    _logger.Error($"[WebSocket] WebSocket error in receive loop for session {_sessionId}: {ex.Message}", ex);
+                    break;
+                }
 
-            if (result.MessageType == WebSocketMessageType.Text)
-            {
-                var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                HandleMessageAsync(message);
+                if (result.MessageType == WebSocketMessageType.Close)
+                {
+                    _logger.Debug($"[WebSocket] Received close message for session {_sessionId}");
+                    break;
+                }
+
+                if (result.MessageType == WebSocketMessageType.Text)
+                {
+                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    HandleMessage(message);
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[WebSocket] Error in receive loop for session {_sessionId}", ex);
         }
     }
 
-    private void HandleMessageAsync(string messageJson)
+    private async Task CheckSessionExpiryAsync(CancellationToken cancellationToken)
+    {
+        try
+        {
+            // Check session expiry every 10 seconds
+            while (!cancellationToken.IsCancellationRequested && _webSocket.State == WebSocketState.Open)
+            {
+                await Task.Delay(TimeSpan.FromSeconds(10), cancellationToken);
+
+                // Check if session has expired
+                if (!_sessionBroker.TryGetSession(_sessionId, out var session) || session.ExpiresAt <= DateTimeOffset.UtcNow)
+                {
+                    _logger.Info($"[WebSocket] Session {_sessionId} expired, closing connection");
+                    
+                    // Send close message if possible
+                    if (_webSocket.State == WebSocketState.Open)
+                    {
+                        try
+                        {
+                            await _webSocket.CloseAsync(
+                                WebSocketCloseStatus.NormalClosure,
+                                "Session expired",
+                                CancellationToken.None);
+                        }
+                        catch
+                        {
+                            // Ignore errors when closing
+                        }
+                    }
+                    
+                    // Cancel to trigger shutdown
+                    _cancellationTokenSource.Cancel();
+                    break;
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // Expected when cancellation is requested
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[WebSocket] Error in session expiry check for session {_sessionId}", ex);
+        }
+    }
+
+    private void HandleMessage(string messageJson)
     {
         try
         {
             if (string.IsNullOrWhiteSpace(messageJson))
             {
-                _logger.Debug("Received empty WebSocket message");
+                _logger.Debug($"[WebSocket] Received empty message in session {_sessionId}");
                 return;
             }
 
@@ -272,14 +343,14 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
 
             if (!root.TryGetProperty("type", out var typeElement))
             {
-                _logger.Debug("WebSocket message missing 'type' field");
+                _logger.Debug($"[WebSocket] Message missing 'type' field in session {_sessionId}");
                 return;
             }
 
             var type = typeElement.GetString();
             if (string.IsNullOrEmpty(type))
             {
-                _logger.Debug("WebSocket message has empty 'type' field");
+                _logger.Debug($"[WebSocket] Message has empty 'type' field in session {_sessionId}");
                 return;
             }
             
@@ -307,19 +378,19 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                     // Quality setting - not implemented in v1, silently ignore
                     break;
                 default:
-                            _logger.Debug($"Unknown message type: {type}");
+                    _logger.Debug($"[WebSocket] Unknown message type '{type}' in session {_sessionId}");
                     // Log but don't close connection - just ignore unknown types
                     break;
             }
         }
         catch (JsonException ex)
         {
-            _logger.Warn($"Invalid JSON in WebSocket message: {ex.Message}");
+            _logger.Warn($"[WebSocket] Invalid JSON in message from session {_sessionId}: {ex.Message}");
             // Don't close connection for malformed JSON - just log and ignore
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling WebSocket message", ex);
+            _logger.Error($"[WebSocket] Error handling message in session {_sessionId}", ex);
             // Don't close connection - log error but continue processing
         }
     }
@@ -356,7 +427,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling pointer move", ex);
+            _logger.Error($"[Input] Error handling pointer move in session {_sessionId}: {ex.Message}", ex);
         }
     }
 
@@ -401,7 +472,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling pointer button", ex);
+            _logger.Error($"[Input] Error handling pointer button in session {_sessionId}: {ex.Message}", ex);
         }
     }
 
@@ -426,7 +497,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling pointer wheel", ex);
+            _logger.Error($"[Input] Error handling pointer wheel in session {_sessionId}: {ex.Message}", ex);
         }
     }
 
@@ -454,7 +525,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling key event", ex);
+            _logger.Error($"[Input] Error handling key event in session {_sessionId}: {ex.Message}", ex);
         }
     }
 
@@ -485,7 +556,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling text event", ex);
+            _logger.Error($"[Input] Error handling text event in session {_sessionId}: {ex.Message}", ex);
         }
     }
 
@@ -504,7 +575,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         catch (Exception ex)
         {
-            _logger.Error("Error handling monitor select", ex);
+            _logger.Error($"[Input] Error handling monitor select in session {_sessionId}: {ex.Message}", ex);
         }
     }
 

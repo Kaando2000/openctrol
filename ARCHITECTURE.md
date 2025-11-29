@@ -54,11 +54,7 @@ Adjust master and per-app volumes.
 
 Change default output device.
 
-Announces itself on LAN via mDNS:
-
-Service name _openctrol._tcp.local.
-
-TXT: agent id, version, capabilities.
+Route per-app audio to specific output devices.
 
 Is reliable:
 
@@ -100,17 +96,27 @@ openctrol/
         RemoteDesktopStatus.cs
         MonitorInfo.cs
         RemoteFrame.cs
+        FramePixelFormat.cs
         IFrameSubscriber.cs
         IRemoteDesktopEngine.cs
         RemoteDesktopEngine.cs      // GDI-based capture
+        CaptureContext.cs            // Reusable GDI resources for capture
       Input/
         PointerEvent.cs
+        PointerEventKind.cs
+        MouseButton.cs
+        MouseButtonAction.cs
         KeyboardEvent.cs
+        KeyboardEventKind.cs
+        KeyModifiers.cs
         InputDispatcher.cs
       Web/
         IControlApiServer.cs
         ControlApiServer.cs
         DesktopWebSocketHandler.cs
+        ISessionBroker.cs
+        SessionBroker.cs
+        DesktopSession.cs
         Dtos/
           HealthDto.cs
           CreateDesktopSessionDto.cs
@@ -119,12 +125,12 @@ openctrol/
       Audio/
         IAudioManager.cs
         AudioManager.cs
+        AudioState.cs
+        AudioDeviceInfo.cs
+        AudioSessionInfo.cs
       Power/
         IPowerManager.cs
         PowerManager.cs
-      Discovery/
-        IDiscoveryBroadcaster.cs
-        MdnsDiscoveryBroadcaster.cs
   tools/
     install-service.ps1
     uninstall-service.ps1
@@ -160,7 +166,6 @@ public static class Program
                 services.AddSingleton<IRemoteDesktopEngine, RemoteDesktopEngine>();
                 services.AddSingleton<IAudioManager, AudioManager>();
                 services.AddSingleton<IPowerManager, PowerManager>();
-                services.AddSingleton<IDiscoveryBroadcaster, MdnsDiscoveryBroadcaster>();
                 services.AddSingleton<IControlApiServer, ControlApiServer>();
 
                 services.AddHostedService<AgentHost>();
@@ -173,9 +178,9 @@ public static class Program
 
 AgentHost : BackgroundService:
 
-On start: start RDE, API server, discovery.
+On start: start RDE, API server.
 
-On stop: stop discovery, API server, RDE.
+On stop: stop API server, RDE.
 
 3.2. Config (Config/AgentConfig.cs, JsonConfigManager.cs)
 
@@ -190,6 +195,7 @@ public sealed class AgentConfig
     public string CertPasswordEncrypted { get; set; } = "";
     public int TargetFps { get; set; } = 30;
     public IList<string> AllowedHaIds { get; set; } = new List<string>();
+    public string ApiKey { get; set; } = ""; // API key for REST endpoint authentication (empty = no auth required)
 }
 
 
@@ -214,6 +220,7 @@ public interface ILogger
     void Info(string message);
     void Warn(string message);
     void Error(string message, Exception? ex = null);
+    void Debug(string message);
 }
 
 
@@ -318,29 +325,41 @@ Implementation: RemoteDesktopEngine
 
 Uses GDI capture for v1 (works on login screen, locked desktop).
 
+Uses CaptureContext for reusable GDI resources (HDC, HBITMAP, encoder) to prevent resource leaks.
+
 Core behaviour:
 
 On Start:
 
 Hook into ISystemStateMonitor.StateChanged.
 
-Start capture thread:
+Create CancellationTokenSource for proper cancellation support.
+
+Start capture thread with cancellation token:
 
 1 loop per frame:
 
-Capture active monitor with BitBlt.
+Check cancellation token.
+
+Capture active monitor with BitBlt (using reusable CaptureContext).
 
 Encode to JPEG.
 
-Update LastFrameAt.
+Update LastFrameAt (with lock protection).
 
 Call OnFrame for all subscribers.
 
 Target config.TargetFps, but drop if slow.
 
+On repeated capture failures (5+), enter degraded state (reported in health endpoint).
+
 On Stop:
 
-Stop thread and release resources.
+Cancel token to signal capture thread.
+
+Stop thread and wait for completion.
+
+Dispose CaptureContext and all GDI resources.
 
 GetMonitors:
 
@@ -388,7 +407,7 @@ public sealed class KeyboardEvent
 
 Implementation: InputDispatcher
 
-P/Invoke SendInput, SetCursorPos, MapVirtualKey, etc.
+P/Invoke SendInput, MapVirtualKey, etc.
 
 Responsibilities:
 
@@ -397,6 +416,10 @@ Convert PointerEvent → mouse moves, clicks, wheel.
 Convert KeyboardEvent → series of keyboard SendInput calls.
 
 Handle Text events with layout-aware mapping (via VkKeyScanEx).
+
+Absolute mouse positioning uses SendInput with MOUSEEVENTF.ABSOLUTE for proper multi-monitor and DPI support.
+
+Automatic modifier key release on keyboard event failures to prevent stuck keys.
 
 RemoteDesktopEngine.InjectPointer/InjectKey simply call into InputDispatcher.
 
@@ -420,7 +443,13 @@ Implementation: SecurityManager
 
 Uses in-memory dictionary for active tokens.
 
-Later: integrate with TLS client certs / pinned HA IDs.
+Implements IDisposable to properly dispose cleanup timer.
+
+Empty allowlist = deny-all by default (secure by default).
+
+Rate limiting: 5 validation failures per minute per client.
+
+Background timer cleans up expired tokens every minute.
 
 4.5. Session broker (can live in Web/ or own folder)
 public sealed class DesktopSession
@@ -441,9 +470,11 @@ public interface ISessionBroker
 }
 
 
-Enforces MaxSessions.
+Enforces MaxSessions limit.
 
 Cleans expired sessions with background timer.
+
+Implements IDisposable to properly dispose cleanup timer.
 
 4.6. Web: REST + WebSocket (Web/)
 4.6.1. Control API server
@@ -626,6 +657,7 @@ public interface IAudioManager
     void SetDeviceVolume(string deviceId, float volume, bool muted);
     void SetSessionVolume(string sessionId, float volume, bool muted);
     void SetDefaultOutputDevice(string deviceId);
+    void SetSessionOutputDevice(string sessionId, string deviceId);
 }
 
 
@@ -653,37 +685,13 @@ public sealed class AudioSessionInfo
     public string Name { get; init; } = "";
     public float Volume { get; init; }
     public bool Muted { get; init; }
+    public string OutputDeviceId { get; init; } = ""; // Empty if routing is unknown (Windows API limitation)
 }
 
 
 Implementation:
 
 Use NAudio CoreAudio wrappers (MMDevice, IAudioSessionManager2).
-
-5.3. Discovery (Discovery/)
-
-Interface:
-
-public interface IDiscoveryBroadcaster
-{
-    void Start();
-    void Stop();
-}
-
-
-MdnsDiscoveryBroadcaster:
-
-Uses Zeroconf or Makaretu.MDNS.
-
-Advertises _openctrol._tcp.local on HttpPort.
-
-TXT:
-
-id=<AgentId>
-
-ver=<appVersion>
-
-cap=desktop,input
 
 6. Plumbing: security, TLS, reliability
 6.1. TLS
@@ -694,29 +702,53 @@ HTTP (dev) / HTTPS (prod) at HttpPort.
 
 Certificate from AgentConfig.CertPath PFX; password decrypted with DPAPI.
 
-Later: enable mTLS and check HA client cert.
+Falls back to HTTP if certificate load fails (with clear logging).
 
-6.2. Reliability
+6.2. REST API Authentication
+
+Optional API key authentication via AgentConfig.ApiKey:
+
+If configured: all REST endpoints except /api/v1/health require authentication.
+
+Headers: X-Openctrol-Key or Authorization: Bearer <key>.
+
+Uses constant-time comparison to prevent timing attacks.
+
+If not configured: authentication disabled (backward compatibility / development).
+
+6.3. Reliability
 
 The service itself:
 
 installed with SCM recovery: restart on failure.
 
+Config validation at startup: fails startup on invalid config (HttpPort, MaxSessions, etc.).
+
 RemoteDesktopEngine:
 
 internal try/catch around capture.
 
-if capture repeatedly fails, backoff + retry.
+if capture repeatedly fails (5+ times), enters degraded state (reported in health endpoint).
+
+Uses CancellationToken for proper cancellation.
+
+Reusable GDI resources via CaptureContext (no handle leaks).
 
 WebSocket:
 
 if client disconnects, unsubscribes from frames, ends session.
+
+Session expiry enforcement: periodic checks close expired connections.
+
+Proper cancellation token handling in all async operations.
 
 /api/v1/health exposes:
 
 last frame timestamp,
 
 engine running state,
+
+desktop state (login_screen/desktop/locked/unknown, with _degraded suffix if applicable),
 
 active sessions.
 
@@ -792,13 +824,13 @@ Locked screen.
 
 Fully logged-out login screen.
 
-Phase 6 – Power, audio, discovery
+Phase 6 – Power, audio
 
 Implement IPowerManager, PowerManager + /api/v1/power.
 
 Implement IAudioManager, AudioManager + /api/v1/audio/* endpoints.
 
-Implement IDiscoveryBroadcaster, MdnsDiscoveryBroadcaster and start/stop it in AgentHost.
+Note: Discovery (mDNS) is not included in v1.0.
 
 Phase 7 – TLS, hardening, scripts
 
@@ -806,8 +838,16 @@ Configure Kestrel for HTTPS using cert from config.
 
 Add basic rate limiting for token validation failures.
 
+Add REST API authentication (API key support).
+
 Enhance /api/v1/health with full detailed status.
 
 Add install-service.ps1 and uninstall-service.ps1.
 
 Write docs/API.md describing REST and WS protocols.
+
+Implement config validation at startup.
+
+Implement proper resource disposal (timers, GDI handles).
+
+Add degraded state reporting for capture failures.

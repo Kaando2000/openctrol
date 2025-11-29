@@ -117,7 +117,8 @@ public sealed class JsonConfigManager : IConfigManager
             CertPath = "",
             CertPasswordEncrypted = "",
             TargetFps = 30,
-            AllowedHaIds = new List<string>()
+            AllowedHaIds = new List<string>(),
+            ApiKey = "" // Empty = no authentication required (for development)
         };
 
         try

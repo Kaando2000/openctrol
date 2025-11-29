@@ -13,6 +13,9 @@ public class SecurityManagerTests
     {
         // Arrange
         var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        // Add test HA ID to allowlist
+        config.AllowedHaIds = new List<string> { "test-ha-id" };
         var logger = new CompositeLogger(new NullLogger());
         var securityManager = new SecurityManager(configManager, logger);
 
@@ -31,6 +34,9 @@ public class SecurityManagerTests
     {
         // Arrange
         var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        // Add test HA ID to allowlist
+        config.AllowedHaIds = new List<string> { "test-ha-id" };
         var logger = new CompositeLogger(new NullLogger());
         var securityManager = new SecurityManager(configManager, logger);
         var issuedToken = securityManager.IssueDesktopSessionToken("test-ha-id", TimeSpan.FromMinutes(15));
@@ -66,6 +72,9 @@ public class SecurityManagerTests
     {
         // Arrange
         var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        // Add test HA ID to allowlist
+        config.AllowedHaIds = new List<string> { "test-ha-id" };
         var logger = new CompositeLogger(new NullLogger());
         var securityManager = new SecurityManager(configManager, logger);
         var issuedToken = securityManager.IssueDesktopSessionToken("test-ha-id", TimeSpan.FromMilliseconds(1));
@@ -82,10 +91,12 @@ public class SecurityManagerTests
     }
 
     [Fact]
-    public void IsHaAllowed_NoAllowlist_ReturnsTrue()
+    public void IsHaAllowed_NoAllowlist_ReturnsFalse()
     {
-        // Arrange
+        // Arrange - Empty allowlist means deny-all (secure by default)
         var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        config.AllowedHaIds = new List<string>(); // Explicitly empty
         var logger = new CompositeLogger(new NullLogger());
         var securityManager = new SecurityManager(configManager, logger);
 
@@ -93,11 +104,11 @@ public class SecurityManagerTests
         var isAllowed = securityManager.IsHaAllowed("any-ha-id");
 
         // Assert
-        Assert.True(isAllowed);
+        Assert.False(isAllowed); // Empty allowlist = deny-all
     }
 
     [Fact]
-    public void IsHaAllowed_NullAllowedHaIds_ReturnsTrue()
+    public void IsHaAllowed_NullAllowedHaIds_ReturnsFalse()
     {
         // Arrange - Simulate JSON deserialization that sets AllowedHaIds to null
         var jsonWithoutAllowedHaIds = """{"AgentId":"test-id","HttpPort":44325,"MaxSessions":1,"TargetFps":30}""";
@@ -105,7 +116,7 @@ public class SecurityManagerTests
         Assert.NotNull(config);
         
         // System.Text.Json may set AllowedHaIds to null if not in JSON
-        // This test verifies the null check in IsHaAllowed handles this case
+        // This test verifies the null check in IsHaAllowed handles this case (deny-all)
         if (config!.AllowedHaIds == null)
         {
             // Create a mock config manager that returns config with null AllowedHaIds
@@ -117,8 +128,42 @@ public class SecurityManagerTests
             var isAllowed = securityManager.IsHaAllowed("any-ha-id");
 
             // Assert
-            Assert.True(isAllowed);
+            Assert.False(isAllowed); // Null/empty allowlist = deny-all (secure by default)
         }
+    }
+
+    [Fact]
+    public void IsHaAllowed_WithAllowlist_ReturnsTrueForAllowed()
+    {
+        // Arrange
+        var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        config.AllowedHaIds = new List<string> { "allowed-id-1", "allowed-id-2" };
+        var logger = new CompositeLogger(new NullLogger());
+        var securityManager = new SecurityManager(configManager, logger);
+
+        // Act
+        var isAllowed = securityManager.IsHaAllowed("allowed-id-1");
+
+        // Assert
+        Assert.True(isAllowed);
+    }
+
+    [Fact]
+    public void IsHaAllowed_WithAllowlist_ReturnsFalseForNotAllowed()
+    {
+        // Arrange
+        var configManager = new JsonConfigManager();
+        var config = configManager.GetConfig();
+        config.AllowedHaIds = new List<string> { "allowed-id-1", "allowed-id-2" };
+        var logger = new CompositeLogger(new NullLogger());
+        var securityManager = new SecurityManager(configManager, logger);
+
+        // Act
+        var isAllowed = securityManager.IsHaAllowed("not-allowed-id");
+
+        // Assert
+        Assert.False(isAllowed);
     }
     
     // Helper class for testing

@@ -4,7 +4,7 @@ using ILogger = Openctrol.Agent.Logging.ILogger;
 
 namespace Openctrol.Agent.Security;
 
-public sealed class SecurityManager : ISecurityManager
+public sealed class SecurityManager : ISecurityManager, IDisposable
 {
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
@@ -30,11 +30,18 @@ public sealed class SecurityManager : ISecurityManager
         // Handle null AllowedHaIds (defensive check in case deserialization didn't initialize it)
         if (config.AllowedHaIds == null || config.AllowedHaIds.Count == 0)
         {
-            // If no allowlist is configured, allow all (for development)
-            return true;
+            // Security: Empty allowlist means deny-all by default (secure by default)
+            // For development, explicitly add HA IDs to the allowlist
+            _logger.Debug($"[Security] HA ID {haId} denied - allowlist is empty (deny-all by default)");
+            return false;
         }
 
-        return config.AllowedHaIds.Contains(haId);
+        var allowed = config.AllowedHaIds.Contains(haId);
+        if (!allowed)
+        {
+            _logger.Debug($"[Security] HA ID {haId} not in allowlist");
+        }
+        return allowed;
     }
 
     public SessionToken IssueDesktopSessionToken(string haId, TimeSpan ttl)
@@ -57,7 +64,7 @@ public sealed class SecurityManager : ISecurityManager
             _tokens[token] = sessionToken;
         }
 
-        _logger.Info($"Issued desktop session token for HA ID: {haId}, expires at: {sessionToken.ExpiresAt}");
+        _logger.Info($"[Security] Issued desktop session token for HA ID: {haId}, expires at: {sessionToken.ExpiresAt}");
         return sessionToken;
     }
 
@@ -69,7 +76,7 @@ public sealed class SecurityManager : ISecurityManager
             var clientId = GetClientIdFromToken(token); // Use token prefix as client identifier
             if (IsRateLimited(clientId))
             {
-                _logger.Warn($"Rate limit exceeded for token validation from {clientId}");
+                _logger.Warn($"[Security] Rate limit exceeded for token validation from {clientId}");
                 validated = null!;
                 return false;
             }
@@ -166,9 +173,14 @@ public sealed class SecurityManager : ISecurityManager
 
             if (expiredTokens.Count > 0)
             {
-                _logger.Info($"Cleaned up {expiredTokens.Count} expired tokens");
+                _logger.Info($"[Security] Cleaned up {expiredTokens.Count} expired tokens");
             }
         }
+    }
+
+    public void Dispose()
+    {
+        _cleanupTimer?.Dispose();
     }
 }
 

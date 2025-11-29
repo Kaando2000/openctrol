@@ -9,5 +9,6 @@ public sealed class AgentConfig
     public string CertPasswordEncrypted { get; set; } = "";
     public int TargetFps { get; set; } = 30;
     public IList<string> AllowedHaIds { get; set; } = new List<string>();
+    public string ApiKey { get; set; } = ""; // API key for REST endpoint authentication (empty = no auth required)
 }
 

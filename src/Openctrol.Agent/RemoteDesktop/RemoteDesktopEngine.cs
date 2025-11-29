@@ -18,13 +18,16 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
     private readonly object _subscribersLock = new();
     private readonly object _statusLock = new(); // Lock for status fields accessed from multiple threads
     private Thread? _captureThread;
-    private bool _isRunning;
+    private CancellationTokenSource? _cancellationTokenSource;
+    private CaptureContext? _captureContext;
+    private volatile bool _isRunning;
     private DateTimeOffset _lastFrameAt;
     private long _sequenceNumber;
     private string _currentState = "unknown";
     private string _currentMonitorId = "DISPLAY1";
     private int _captureFailureCount = 0;
     private const int MaxCaptureFailures = 5;
+    private bool _isDegraded = false; // Set to true when capture repeatedly fails
 
     public RemoteDesktopEngine(
         IConfigManager configManager,
@@ -46,7 +49,9 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         }
 
         _isRunning = true;
-        _logger.Info("RemoteDesktopEngine starting...");
+        _cancellationTokenSource = new CancellationTokenSource();
+        _captureContext = new CaptureContext();
+        _logger.Info("[RemoteDesktop] Starting...");
 
         // Hook into system state monitor to react to state changes
         if (_systemStateMonitor != null)
@@ -57,14 +62,14 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             UpdateStateFromSystemState(initialState);
         }
 
-        _captureThread = new Thread(CaptureLoop)
+        _captureThread = new Thread(() => CaptureLoop(_cancellationTokenSource.Token))
         {
             IsBackground = true,
             Name = "RemoteDesktopCapture"
         };
         _captureThread.Start();
 
-        _logger.Info("RemoteDesktopEngine started");
+        _logger.Info("[RemoteDesktop] Started");
     }
 
     public void Stop()
@@ -75,7 +80,10 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         }
 
         _isRunning = false;
-        _logger.Info("RemoteDesktopEngine stopping...");
+        _logger.Info("[RemoteDesktop] Stopping...");
+
+        // Cancel capture loop
+        _cancellationTokenSource?.Cancel();
 
         // Unhook from system state monitor
         if (_systemStateMonitor != null)
@@ -83,10 +91,23 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             _systemStateMonitor.StateChanged -= OnSystemStateChanged;
         }
 
-        _captureThread?.Join(TimeSpan.FromSeconds(5));
-        _captureThread = null;
+        // Wait for capture thread to exit
+        if (_captureThread != null)
+        {
+            if (!_captureThread.Join(TimeSpan.FromSeconds(5)))
+            {
+                _logger.Warn("[RemoteDesktop] Capture thread did not exit within timeout");
+            }
+            _captureThread = null;
+        }
 
-        _logger.Info("RemoteDesktopEngine stopped");
+        // Dispose resources
+        _captureContext?.Dispose();
+        _captureContext = null;
+        _cancellationTokenSource?.Dispose();
+        _cancellationTokenSource = null;
+
+        _logger.Info("[RemoteDesktop] Stopped");
     }
 
     public RemoteDesktopStatus GetStatus()
@@ -94,11 +115,18 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         // Synchronize access to status fields that are written from multiple threads
         lock (_statusLock)
         {
+            var state = _currentState;
+            // If degraded, append degraded status
+            if (_isDegraded && state != "unknown")
+            {
+                state = $"{state}_degraded";
+            }
+            
             return new RemoteDesktopStatus
             {
                 IsRunning = _isRunning,
                 LastFrameAt = _lastFrameAt,
-                State = _currentState
+                State = state
             };
         }
     }
@@ -215,69 +243,115 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         }
     }
 
-    private void CaptureLoop()
+    private void CaptureLoop(CancellationToken cancellationToken)
     {
         var config = _configManager.GetConfig();
         var targetFrameTime = TimeSpan.FromMilliseconds(1000.0 / config.TargetFps);
 
-        while (_isRunning)
+        while (!cancellationToken.IsCancellationRequested && _isRunning)
         {
             var frameStart = DateTimeOffset.UtcNow;
 
             try
             {
-                var frame = GenerateSyntheticFrame();
+                var frame = GenerateFrame(cancellationToken);
                 if (frame != null)
                 {
                     // Update last frame timestamp with synchronization
                     lock (_statusLock)
                     {
                         _lastFrameAt = DateTimeOffset.UtcNow;
+                        _isDegraded = false; // Reset degraded state on successful capture
                     }
                     _sequenceNumber++;
 
                     NotifySubscribers(frame);
                 }
             }
+            catch (OperationCanceledException)
+            {
+                // Expected when cancellation is requested
+                break;
+            }
             catch (Exception ex)
             {
-                _logger.Error("Error in capture loop", ex);
+                _logger.Error("[RemoteDesktop] Error in capture loop", ex);
+            }
+
+            // Check cancellation before sleeping
+            if (cancellationToken.IsCancellationRequested)
+            {
+                break;
             }
 
             var elapsed = DateTimeOffset.UtcNow - frameStart;
             var sleepTime = targetFrameTime - elapsed;
             if (sleepTime > TimeSpan.Zero)
             {
-                Thread.Sleep(sleepTime);
+                // Use cancellation-aware sleep
+                try
+                {
+                    cancellationToken.WaitHandle.WaitOne(sleepTime);
+                }
+                catch (OperationCanceledException)
+                {
+                    break;
+                }
             }
         }
+
+        _logger.Info("[RemoteDesktop] Capture loop exited");
     }
 
-    private RemoteFrame? GenerateSyntheticFrame()
+    private RemoteFrame? GenerateFrame(CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested)
+        {
+            return null;
+        }
+
         // Try real GDI capture first
-        var frame = CaptureScreenGdi();
+        var frame = CaptureScreenGdi(cancellationToken);
         if (frame != null)
         {
-            _captureFailureCount = 0;
+            // Reset failure count on successful capture (protected by lock)
+            lock (_statusLock)
+            {
+                _captureFailureCount = 0;
+            }
             return frame;
         }
 
-        // If capture fails, increment failure count
-        _captureFailureCount++;
-        if (_captureFailureCount >= MaxCaptureFailures)
+        // If capture fails, increment failure count (protected by lock)
+        int currentFailureCount;
+        lock (_statusLock)
         {
-            _logger.Warn($"Screen capture failed {_captureFailureCount} times, backing off");
-            Thread.Sleep(1000); // Backoff
-            _captureFailureCount = 0;
+            _captureFailureCount++;
+            currentFailureCount = _captureFailureCount;
+            
+            if (_captureFailureCount >= MaxCaptureFailures)
+            {
+                _isDegraded = true;
+                _captureFailureCount = 0; // Reset after entering degraded state
+            }
+        }
+        
+        if (currentFailureCount >= MaxCaptureFailures)
+        {
+            _logger.Warn($"[RemoteDesktop] Screen capture failed {currentFailureCount} times, entering degraded state");
         }
 
         // Fallback to synthetic frame if capture fails
         return GenerateFallbackFrame();
     }
 
-    private RemoteFrame? CaptureScreenGdi()
+    private RemoteFrame? CaptureScreenGdi(CancellationToken cancellationToken)
     {
+        if (cancellationToken.IsCancellationRequested || _captureContext == null)
+        {
+            return null;
+        }
+
         try
         {
             // Get the selected monitor's bounds
@@ -290,7 +364,7 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                 selectedMonitor = monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors.FirstOrDefault();
                 if (selectedMonitor == null)
                 {
-                    _logger.Warn("No monitors available for capture");
+                    _logger.Warn("[RemoteDesktop] No monitors available for capture");
                     return null;
                 }
             }
@@ -303,101 +377,47 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                 return null;
             }
 
-            // Get the device context for the entire virtual screen
-            var hdcScreen = GetDC(IntPtr.Zero);
-            if (hdcScreen == IntPtr.Zero)
+            // Ensure capture context has resources allocated
+            if (!_captureContext.EnsureResources(screenWidth, screenHeight))
+            {
+                _logger.Error($"[RemoteDesktop] Failed to allocate GDI resources for monitor {selectedMonitor.Id} ({screenWidth}x{screenHeight})");
+                return null;
+            }
+
+            // Calculate source coordinates for the selected monitor
+            var srcX = 0;
+            var srcY = 0;
+            
+            // If not primary monitor, get its position from screen bounds
+            if (!selectedMonitor.IsPrimary)
+            {
+                var screens = System.Windows.Forms.Screen.AllScreens;
+                var screen = screens.FirstOrDefault(s => s.DeviceName == selectedMonitor.Name);
+                if (screen != null)
+                {
+                    srcX = screen.Bounds.X;
+                    srcY = screen.Bounds.Y;
+                }
+            }
+
+            // Capture frame using reusable context
+            using var bitmap = _captureContext.CaptureFrame(srcX, srcY, screenWidth, screenHeight);
+            if (bitmap == null)
             {
                 return null;
             }
 
-            try
-            {
-                var hdcMem = CreateCompatibleDC(hdcScreen);
-                if (hdcMem == IntPtr.Zero)
-                {
-                    return null;
-                }
-
-                try
-                {
-                    var hBitmap = CreateCompatibleBitmap(hdcScreen, screenWidth, screenHeight);
-                    if (hBitmap == IntPtr.Zero)
-                    {
-                        return null;
-                    }
-
-                    try
-                    {
-                        var oldBitmap = SelectObject(hdcMem, hBitmap);
-                        
-                        // Calculate source coordinates for the selected monitor
-                        // For multi-monitor setups, capture from the correct position based on monitor bounds
-                        var srcX = 0;
-                        var srcY = 0;
-                        
-                        // If not primary monitor, get its position from screen bounds
-                        if (!selectedMonitor.IsPrimary)
-                        {
-                            var screens = System.Windows.Forms.Screen.AllScreens;
-                            var screen = screens.FirstOrDefault(s => s.DeviceName == selectedMonitor.Name);
-                            if (screen != null)
-                            {
-                                srcX = screen.Bounds.X;
-                                srcY = screen.Bounds.Y;
-                            }
-                        }
-                        
-                        BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, srcX, srcY, SRCCOPY);
-                        SelectObject(hdcMem, oldBitmap);
-
-                        using var bitmap = Image.FromHbitmap(hBitmap);
-                        return EncodeToJpeg(bitmap);
-                    }
-                    finally
-                    {
-                        DeleteObject(hBitmap);
-                    }
-                }
-                finally
-                {
-                    DeleteDC(hdcMem);
-                }
-            }
-            finally
-            {
-                ReleaseDC(IntPtr.Zero, hdcScreen);
-            }
-        }
-        catch (Exception ex)
-        {
-            _logger.Error("Error in GDI screen capture", ex);
-            return null;
-        }
-    }
-
-    private RemoteFrame? EncodeToJpeg(Bitmap bitmap)
-    {
-        try
-        {
-            using var ms = new MemoryStream();
-            var encoder = ImageCodecInfo.GetImageEncoders()
-                .FirstOrDefault(c => c.FormatID == ImageFormat.Jpeg.Guid);
-
-            if (encoder == null)
+            // Encode to JPEG
+            var jpegBytes = _captureContext.EncodeToJpeg(bitmap);
+            if (jpegBytes == null)
             {
                 return null;
             }
-
-            using var parameters = new EncoderParameters(1);
-            parameters.Param[0] = new EncoderParameter(Encoder.Quality, 75L);
-
-            bitmap.Save(ms, encoder, parameters);
-            var jpegBytes = ms.ToArray();
 
             return new RemoteFrame
             {
-                Width = bitmap.Width,
-                Height = bitmap.Height,
+                Width = screenWidth,
+                Height = screenHeight,
                 Format = FramePixelFormat.Jpeg,
                 Payload = new ReadOnlyMemory<byte>(jpegBytes),
                 SequenceNumber = _sequenceNumber,
@@ -406,10 +426,11 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         }
         catch (Exception ex)
         {
-            _logger.Error("Error encoding bitmap to JPEG", ex);
+            _logger.Error($"[RemoteDesktop] Error in GDI screen capture: {ex.Message}", ex);
             return null;
         }
     }
+
 
     private RemoteFrame? GenerateFallbackFrame()
     {
@@ -421,40 +442,33 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(Color.Black);
 
-        return EncodeToJpeg(bitmap);
+        // Use capture context for encoding if available
+        if (_captureContext != null)
+        {
+            var jpegBytes = _captureContext.EncodeToJpeg(bitmap);
+            if (jpegBytes != null)
+            {
+                return new RemoteFrame
+                {
+                    Width = width,
+                    Height = height,
+                    Format = FramePixelFormat.Jpeg,
+                    Payload = new ReadOnlyMemory<byte>(jpegBytes),
+                    SequenceNumber = _sequenceNumber,
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+            }
+        }
+
+        return null;
     }
 
-    // P/Invoke declarations for GDI capture
-    [DllImport("user32.dll")]
-    private static extern IntPtr GetDC(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    private static extern int ReleaseDC(IntPtr hWnd, IntPtr hDC);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateCompatibleDC(IntPtr hdc);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateCompatibleBitmap(IntPtr hdc, int nWidth, int nHeight);
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr SelectObject(IntPtr hdc, IntPtr hgdiobj);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr hObject);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteDC(IntPtr hdc);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
-
+    // P/Invoke declarations for system metrics
     [DllImport("user32.dll")]
     private static extern int GetSystemMetrics(int nIndex);
 
     private const int SM_CXSCREEN = 0;
     private const int SM_CYSCREEN = 1;
-    private const int SRCCOPY = 0x00CC0020;
 
     private void NotifySubscribers(RemoteFrame frame)
     {
@@ -498,7 +512,7 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             if (_currentState != newState)
             {
                 _currentState = newState;
-                _logger.Info($"Remote desktop state updated to: {newState} (Session: {snapshot.ActiveSessionId})");
+                _logger.Info($"[RemoteDesktop] State updated to: {newState} (Session: {snapshot.ActiveSessionId})");
             }
         }
     }

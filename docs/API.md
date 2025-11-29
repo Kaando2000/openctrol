@@ -9,13 +9,31 @@ The Openctrol Agent exposes a REST API and WebSocket endpoint for remote desktop
 - HTTP: `http://<agent-ip>:44325`
 - HTTPS: `https://<agent-ip>:44325` (when certificate is configured)
 
+## Authentication
+
+REST API endpoints (except `/api/v1/health`) require authentication via API key when configured:
+
+- **Header**: `X-Openctrol-Key: <api-key>` OR
+- **Header**: `Authorization: Bearer <api-key>`
+
+If no API key is configured in `AgentConfig.ApiKey`, authentication is disabled (backward compatibility / development mode).
+
+**Unauthenticated requests** return:
+```json
+{
+  "error": "unauthorized",
+  "details": "Missing or invalid credentials"
+}
+```
+with HTTP status `401 Unauthorized`.
+
 ## REST API Endpoints
 
 ### Health Check
 
 **GET** `/api/v1/health`
 
-Returns the health status of the agent.
+Returns the health status of the agent. **No authentication required** (public health check).
 
 **Response:**
 ```json
@@ -25,7 +43,7 @@ Returns the health status of the agent.
   "remote_desktop": {
     "is_running": true,
     "last_frame_at": "2024-01-01T12:00:00Z",
-    "state": "desktop"
+    "state": "desktop"  // Can be: "login_screen", "desktop", "locked", "unknown", or with "_degraded" suffix (e.g., "desktop_degraded")
   },
   "active_sessions": 1
 }
@@ -36,6 +54,8 @@ Returns the health status of the agent.
 **POST** `/api/v1/sessions/desktop`
 
 Creates a new desktop session and returns a WebSocket URL for connection.
+
+**Authentication:** Required (API key)
 
 **Request:**
 ```json
@@ -60,6 +80,8 @@ Creates a new desktop session and returns a WebSocket URL for connection.
 
 Ends an active desktop session.
 
+**Authentication:** Required (API key)
+
 **Response:** 200 OK
 
 ### Power Control
@@ -67,6 +89,8 @@ Ends an active desktop session.
 **POST** `/api/v1/power`
 
 Controls system power (restart or shutdown).
+
+**Authentication:** Required (API key)
 
 **Request:**
 ```json
@@ -82,6 +106,8 @@ Controls system power (restart or shutdown).
 **GET** `/api/v1/audio/state`
 
 Returns the current audio state including devices and sessions.
+
+**Authentication:** Required (API key)
 
 **Response:**
 ```json
@@ -102,7 +128,7 @@ Returns the current audio state including devices and sessions.
       "name": "Application Name",
       "volume": 0.5,
       "muted": false,
-      "output_device_id": "device-id"
+      "output_device_id": ""  // Empty string if routing is unknown (Windows API limitation)
     }
   ]
 }
@@ -113,6 +139,8 @@ Returns the current audio state including devices and sessions.
 **POST** `/api/v1/audio/device`
 
 Sets the volume and mute state for an audio device.
+
+**Authentication:** Required (API key)
 
 **Request:**
 ```json
@@ -137,6 +165,8 @@ Sets the volume and mute state for an audio device.
 **POST** `/api/v1/audio/session`
 
 Sets the volume and mute state for an audio session.
+
+**Authentication:** Required (API key)
 
 **Request:**
 ```json
@@ -309,8 +339,14 @@ All endpoints return standardized JSON error responses on failure:
 
 ## Security
 
-- Session tokens expire after the TTL specified during session creation
-- Token validation failures are rate-limited (5 failures per minute per client)
-- HA IDs can be restricted via the `AllowedHaIds` configuration
-- HTTPS is supported when a certificate is configured
+- **REST API Authentication**: Optional API key authentication (configured via `AgentConfig.ApiKey`)
+  - When configured, all REST endpoints except `/api/v1/health` require authentication
+  - Use `X-Openctrol-Key` header or `Authorization: Bearer <key>` header
+  - If not configured, authentication is disabled (development mode)
+- **Session tokens**: Expire after the TTL specified during session creation
+- **Rate limiting**: Token validation failures are rate-limited (5 failures per minute per client)
+- **HA ID allowlist**: HA IDs can be restricted via the `AllowedHaIds` configuration
+  - Empty allowlist = deny-all by default (secure by default)
+  - Explicitly add HA IDs to the allowlist to grant access
+- **HTTPS**: Supported when a certificate is configured via `AgentConfig.CertPath`
 
