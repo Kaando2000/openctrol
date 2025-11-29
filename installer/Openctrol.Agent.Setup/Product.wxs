@@ -41,7 +41,7 @@
     <Property Id="CONFIG_CREATEFIREWALL" Value="1" />
     <Property Id="CONFIG_DELETEPROGRAMDATA" Value="0" />
     <Property Id="VALIDCONFIG" Value="0" />
-    <Property Id="VALIDCONFIGERROR" />
+    <Property Id="VALIDCONFIGERROR" Hidden="yes" />
     
     <!-- Secure properties are already defined above with Secure="yes" -->
 
@@ -103,6 +103,7 @@
 
     <!-- Event Log Source -->
     <Component Id="EventLogSource" Guid="D3E4F5A6-B7C8-4D9E-0F1A-2B3C4D5E6F7A" Directory="INSTALLFOLDER">
+      <File Id="EventLogExe" Source="$(var.AgentPublishDir)Openctrol.Agent.exe" KeyPath="yes" />
       <util:EventSource Log="Application" 
                         EventMessageFile="[INSTALLFOLDER]Openctrol.Agent.exe" 
                         Name="OpenctrolAgent" />
@@ -125,49 +126,55 @@
       <ServiceControl Id="ServiceControl"
                       Name="$(var.ServiceName)"
                       Stop="both"
+                      Start="install"
                       Remove="uninstall"
                       Wait="yes" />
     </Component>
 
     <!-- Custom Actions -->
     <CustomAction Id="ConfigCustomAction"
-                  BinaryKey="ConfigCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="CreateConfigFile"
                   Execute="deferred"
-                  Impersonate="no" />
+                  Impersonate="no"
+                  Return="check" />
     
     <CustomAction Id="ServiceCustomAction"
-                  BinaryKey="ServiceCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="InstallService"
                   Execute="deferred"
-                  Impersonate="no" />
+                  Impersonate="no"
+                  Return="check" />
     
     <CustomAction Id="FirewallCustomAction"
-                  BinaryKey="FirewallCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="CreateFirewallRule"
                   Execute="deferred"
-                  Impersonate="no" />
+                  Impersonate="no"
+                  Return="check" />
     
     <CustomAction Id="UninstallFirewallCustomAction"
-                  BinaryKey="FirewallCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="RemoveFirewallRule"
                   Execute="deferred"
-                  Impersonate="no" />
+                  Impersonate="no"
+                  Return="check" />
     
     <CustomAction Id="UninstallProgramDataCustomAction"
-                  BinaryKey="ConfigCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="DeleteProgramData"
                   Execute="deferred"
-                  Impersonate="no" />
+                  Impersonate="no"
+                  Return="check" />
     
     <CustomAction Id="ValidateConfig"
-                  BinaryKey="ValidationCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="ValidateConfig"
                   Execute="immediate"
                   Return="check" />
     
     <CustomAction Id="GenerateApiKey"
-                  BinaryKey="ValidationCustomActionBinary"
+                  BinaryKey="CustomActionsBinary"
                   DllEntry="GenerateApiKey"
                   Execute="immediate"
                   Return="check" />
@@ -205,11 +212,9 @@
       <Custom Action="UninstallProgramDataCustomAction" After="RemoveFiles">REMOVE="ALL" AND CONFIG_DELETEPROGRAMDATA="1"</Custom>
     </InstallExecuteSequence>
 
-    <!-- Binary References for Custom Actions -->
-    <Binary Id="ConfigCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
-    <Binary Id="ServiceCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
-    <Binary Id="FirewallCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
-    <Binary Id="ValidationCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
+    <!-- Binary Reference for Custom Actions DLL -->
+    <!-- Note: The path is set via -dCustomActions.TargetPath in the build script -->
+    <Binary Id="CustomActionsBinary" SourceFile="$(var.CustomActions.TargetPath)" />
   </Product>
 
   <!-- Fragment for Agent Dependencies -->

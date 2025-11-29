@@ -34,6 +34,7 @@
         </Control>
         <Control Id="CertPathBrowse" Type="PushButton" X="340" Y="133" Width="20" Height="18" Text="...">
           <Condition Action="hide">CONFIG_USEHTTPS = "0"</Condition>
+          <Publish Event="SpawnDialog" Value="BrowseDlg">1</Publish>
         </Control>
         
         <!-- Certificate Password -->

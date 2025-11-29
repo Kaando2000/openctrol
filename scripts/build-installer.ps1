@@ -44,11 +44,20 @@ $customActionsProject = Join-Path $installerDir "CustomActions\CustomActions.csp
 
 Push-Location (Split-Path $customActionsProject)
 try {
-    dotnet build -c $Configuration
+    # Build for x64 platform to match MSI architecture
+    dotnet build -c $Configuration -p:PlatformTarget=x64
     if ($LASTEXITCODE -ne 0) {
         Write-Error "Custom actions build failed"
         exit 1
     }
+    
+    # Verify DLL was created
+    $dllPath = Join-Path (Split-Path $customActionsProject) "bin\$Configuration\net8.0-windows\CustomActions.dll"
+    if (-not (Test-Path $dllPath)) {
+        Write-Error "CustomActions.dll not found after build at: $dllPath"
+        exit 1
+    }
+    
     Write-Host "Custom actions built successfully" -ForegroundColor Green
 }
 finally {
@@ -129,6 +138,16 @@ try {
             $wixobjPath = Join-Path $installerDir $wixobjFile
             
             $customActionsDll = Join-Path $projectRoot "installer\Openctrol.Agent.Setup\CustomActions\bin\Release\net8.0-windows\CustomActions.dll"
+            
+            # Verify DLL exists
+            if (-not (Test-Path $customActionsDll)) {
+                Write-Error "CustomActions.dll not found at: $customActionsDll"
+                Write-Error "Please build CustomActions project first: dotnet build installer\Openctrol.Agent.Setup\CustomActions\CustomActions.csproj -c Release"
+                exit 1
+            }
+            
+            # Use absolute path for WiX variable (required for WiX)
+            $customActionsDllAbsolute = (Resolve-Path $customActionsDll).Path
             $publishDirNormalized = $publishDir.TrimEnd('\') + '\'
             
             $candleArgs = @(
@@ -136,7 +155,7 @@ try {
                 "-arch", $Platform,
                 "-ext", "WixUtilExtension",
                 "-dAgentPublishDir=$publishDirNormalized",
-                "-dCustomActions.TargetPath=$customActionsDll",
+                "-dCustomActions.TargetPath=$customActionsDllAbsolute",
                 "-out", $wixobjPath,
                 $wxsPath
             )

@@ -6,6 +6,9 @@
     <Nullable>enable</Nullable>
     <OutputType>Library</OutputType>
     <AssemblyName>CustomActions</AssemblyName>
+    <PlatformTarget>x64</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
   </PropertyGroup>
 
   <ItemGroup>
@@ -18,6 +21,8 @@
     <Reference Include="System.Security" />
     <Reference Include="Microsoft.Deployment.WindowsInstaller">
       <HintPath>C:\Program Files (x86)\WiX Toolset v3.14\SDK\Microsoft.Deployment.WindowsInstaller.dll</HintPath>
+      <Private>True</Private>
+      <CopyLocal>True</CopyLocal>
     </Reference>
   </ItemGroup>
 
