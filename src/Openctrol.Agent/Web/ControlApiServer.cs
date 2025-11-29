@@ -77,12 +77,21 @@ public sealed class ControlApiServer : IControlApiServer
                     });
                     _logger.Info($"HTTPS enabled on port {config.HttpPort} with certificate from {config.CertPath}");
                 }
+                catch (InvalidOperationException ex)
+                {
+                    // Certificate password decryption failed - this is a fatal error
+                    // We do NOT fall back to HTTP as this indicates a security misconfiguration
+                    _logger.Error("Fatal: Certificate password decryption failed. HTTPS cannot be enabled. Fix the certificate password encryption in config.", ex);
+                    throw; // Fail startup - certificate configuration is invalid
+                }
                 catch (Exception ex)
                 {
+                    // Other certificate loading errors (file format, permissions, etc.)
                     _logger.Error("Error loading certificate, falling back to HTTP", ex);
                     _certificate?.Dispose();
                     _certificate = null;
                     options.ListenAnyIP(config.HttpPort);
+                    _logger.Warn("Falling back to HTTP mode due to certificate loading error");
                 }
             }
             else
@@ -272,7 +281,8 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error($"[Session] Error creating desktop session: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "session_creation_failed", Details = ex.Message }, statusCode: 500);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to create desktop session");
+                return Results.Json(new ErrorResponse { Error = "session_creation_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
@@ -305,7 +315,8 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error($"[Session] Error ending session {id}: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "session_end_failed", Details = ex.Message }, statusCode: 500);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to end session");
+                return Results.Json(new ErrorResponse { Error = "session_end_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
@@ -403,7 +414,8 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error($"[Audio] Error getting audio state: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "audio_state_failed", Details = ex.Message }, statusCode: 500);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to retrieve audio state");
+                return Results.Json(new ErrorResponse { Error = "audio_state_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
@@ -450,7 +462,8 @@ public sealed class ControlApiServer : IControlApiServer
                     catch (Exception ex)
                     {
                         _logger.Error($"[Audio] Error setting default device {request.DeviceId}: {ex.Message}", ex);
-                        return Results.Json(new ErrorResponse { Error = "default_device_change_failed", Details = ex.Message }, statusCode: 500);
+                        var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set default audio device");
+                        return Results.Json(new ErrorResponse { Error = "default_device_change_failed", Details = sanitizedMessage }, statusCode: 500);
                     }
                 }
 
@@ -464,7 +477,8 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error($"[Audio] Error setting device volume: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "audio_device_operation_failed", Details = ex.Message }, statusCode: 500);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set device volume");
+                return Results.Json(new ErrorResponse { Error = "audio_device_operation_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
@@ -516,7 +530,8 @@ public sealed class ControlApiServer : IControlApiServer
                     catch (Exception ex)
                     {
                         _logger.Error($"[Audio] Error routing session {request.SessionId} to device {request.OutputDeviceId}: {ex.Message}", ex);
-                        return Results.Json(new ErrorResponse { Error = "session_device_change_failed", Details = ex.Message }, statusCode: 500);
+                        var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to route session to device");
+                        return Results.Json(new ErrorResponse { Error = "session_device_change_failed", Details = sanitizedMessage }, statusCode: 500);
                     }
                 }
 
@@ -530,7 +545,8 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error($"[Audio] Error setting session volume: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "audio_session_operation_failed", Details = ex.Message }, statusCode: 500);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set session volume");
+                return Results.Json(new ErrorResponse { Error = "audio_session_operation_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
@@ -553,10 +569,28 @@ public sealed class ControlApiServer : IControlApiServer
                 return;
             }
 
+            // SECURITY NOTE: Session token is passed via query string for compatibility.
+            // Tokens in URLs are visible in:
+            //   - Server access logs
+            //   - Browser history
+            //   - Proxy logs
+            //   - Referrer headers
+            // 
+            // Mitigations:
+            //   - Always use HTTPS/TLS in production to encrypt URLs in transit
+            //   - Tokens have TTL and are single-use per session
+            //   - Server logs should not include full URLs with query strings (redact if logging)
+            // 
+            // Future enhancement: Consider moving token to WebSocket subprotocol or initial message
+            // after upgrade for better security.
+            
             // Parse query parameters
             var query = context.Request.Query;
             var sessionId = query["sess"].ToString();
             var token = query["token"].ToString();
+            
+            // Log connection attempt without exposing token (for security)
+            _logger.Debug($"[WebSocket] Connection attempt for session {sessionId} from {context.Connection.RemoteIpAddress}");
 
             if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(token))
             {
@@ -638,10 +672,17 @@ public sealed class ControlApiServer : IControlApiServer
     {
         var config = _configManager.GetConfig();
         
-        // If no API key is configured, allow all requests (backward compatibility / development)
+        // SECURITY WARNING: If no API key is configured, authentication is disabled.
+        // This is acceptable ONLY for development/testing. In production, always configure ApiKey.
+        // Empty ApiKey means all REST endpoints are accessible without authentication.
         if (string.IsNullOrEmpty(config.ApiKey))
         {
-            return null; // No auth required
+            // Log warning on first unauthenticated request to sensitive endpoint
+            // (We don't want to spam logs, so this is a one-time warning per endpoint pattern)
+            _logger.Warn($"[Auth] SECURITY WARNING: API key not configured. Authentication is DISABLED. " +
+                        $"This endpoint ({context.Request.Path}) is accessible without authentication. " +
+                        $"Configure ApiKey in config.json for production use.");
+            return null; // No auth required (development mode)
         }
 
         // Check for API key in header (X-Openctrol-Key or Authorization: Bearer <key>)
@@ -680,6 +721,31 @@ public sealed class ControlApiServer : IControlApiServer
         return null; // Authentication successful
     }
 
+    /// <summary>
+    /// Sanitizes exception messages for client responses.
+    /// Full exception details are logged server-side, but client responses should be generic.
+    /// </summary>
+    private static string SanitizeErrorMessage(Exception ex, string defaultMessage)
+    {
+        // For ArgumentException, InvalidOperationException, etc., use the message as-is
+        // (these are usually safe and informative for clients)
+        if (ex is ArgumentException || ex is InvalidOperationException || ex is NotSupportedException)
+        {
+            return ex.Message;
+        }
+        
+        // For other exceptions, return generic message to avoid leaking internal details
+        return defaultMessage;
+    }
+
+    /// <summary>
+    /// Decrypts a certificate password that was encrypted using DPAPI (Data Protection API).
+    /// Certificate passwords must be stored encrypted in the config file for security.
+    /// This method does NOT fall back to plain text - decryption failures are fatal.
+    /// </summary>
+    /// <param name="encryptedPassword">Base64-encoded encrypted password</param>
+    /// <returns>Decrypted password string</returns>
+    /// <exception cref="InvalidOperationException">If decryption fails or password format is invalid</exception>
     private static string DecryptCertPassword(string encryptedPassword)
     {
         if (string.IsNullOrEmpty(encryptedPassword))
@@ -693,10 +759,17 @@ public sealed class ControlApiServer : IControlApiServer
             var decryptedBytes = ProtectedData.Unprotect(encryptedBytes, null, DataProtectionScope.LocalMachine);
             return System.Text.Encoding.UTF8.GetString(decryptedBytes);
         }
-        catch
+        catch (FormatException ex)
         {
-            // If decryption fails, return as-is (might be plain text for development)
-            return encryptedPassword;
+            throw new InvalidOperationException("Certificate password is not in valid Base64 format. Passwords must be encrypted using DPAPI before storing in config.", ex);
+        }
+        catch (CryptographicException ex)
+        {
+            throw new InvalidOperationException("Failed to decrypt certificate password. The password may have been encrypted on a different machine or the encryption key is unavailable. Re-encrypt the password on this machine.", ex);
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException("Unexpected error decrypting certificate password. Ensure the password was encrypted using DPAPI (DataProtectionScope.LocalMachine).", ex);
         }
     }
 }

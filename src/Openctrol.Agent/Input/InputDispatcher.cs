@@ -207,10 +207,17 @@ public sealed class InputDispatcher
                 }
             }
 
+            // Validate and clamp coordinates to monitor bounds
+            // Prevent extreme values that could cause issues
+            var monitorWidth = selectedScreen.Bounds.Width;
+            var monitorHeight = selectedScreen.Bounds.Height;
+            var clampedX = Math.Clamp(x, 0, monitorWidth);
+            var clampedY = Math.Clamp(y, 0, monitorHeight);
+            
             // Client coordinates are relative to the streamed monitor
             // Convert to virtual desktop coordinates using the selected monitor's bounds
-            var virtualX = selectedScreen.Bounds.X + x;
-            var virtualY = selectedScreen.Bounds.Y + y;
+            var virtualX = selectedScreen.Bounds.X + clampedX;
+            var virtualY = selectedScreen.Bounds.Y + clampedY;
 
             // Get virtual desktop dimensions
             var minX = virtualDesktop.Min(s => s.Bounds.Left);

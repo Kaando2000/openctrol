@@ -52,6 +52,7 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
             var haIdCount = config.AllowedHaIds?.Count ?? 0;
             var tlsMode = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "HTTPS" : "HTTP";
+            var authMode = string.IsNullOrEmpty(config.ApiKey) ? "DISABLED (development mode)" : "ENABLED";
             
             _logger.Info("=== Openctrol Agent Configuration ===");
             _logger.Info($"Version: {version}");
@@ -61,6 +62,11 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             _logger.Info($"Max Sessions: {config.MaxSessions}");
             _logger.Info($"Target FPS: {config.TargetFps}");
             _logger.Info($"HA IDs in allowlist: {haIdCount}");
+            _logger.Info($"Authentication: {authMode}");
+            if (string.IsNullOrEmpty(config.ApiKey))
+            {
+                _logger.Warn("SECURITY WARNING: API key not configured. REST endpoints are accessible without authentication!");
+            }
             _logger.Info($"Audio subsystem: {(System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "Available" : "Not available")}");
             _logger.Info("=====================================");
 

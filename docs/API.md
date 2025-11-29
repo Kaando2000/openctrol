@@ -83,9 +83,16 @@ Creates a new desktop session and returns a WebSocket URL for connection.
 
 **POST** `/api/v1/sessions/desktop/{session-id}/end`
 
-Ends an active desktop session.
+Ends a desktop session and immediately invalidates all associated resources.
 
 **Authentication:** Required (API key)
+
+**Behavior:**
+- The session is removed from active sessions.
+- The session is marked as inactive.
+- Any associated WebSocket connection(s) are immediately closed.
+- After this call, the session ID is no longer valid.
+- Subsequent token validation for this session will fail.
 
 **Response:** 200 OK
 
@@ -198,6 +205,35 @@ Sets the volume and mute state for an audio session.
 Connect to: `/ws/desktop?sess=<session-id>&token=<token>`
 
 The session ID and token are obtained from the Create Desktop Session endpoint.
+
+### Message Size Limits
+
+**Maximum message size: 64KB (65,536 bytes)**
+
+- Messages are accumulated across multiple WebSocket frames until `EndOfMessage` is true.
+- The cumulative size is tracked and checked after each chunk.
+- If a message exceeds 64KB, the connection is immediately closed with:
+  - Close status: `MessageTooBig` (1009)
+  - Close reason: "Message size X bytes exceeds limit of 65536 bytes"
+- A warning is logged with the session ID and actual message size.
+- This limit prevents DoS attacks via oversized messages and limits memory usage.
+
+### Session and Token Invalidation
+
+**Session invalidation:**
+- When `POST /api/v1/sessions/desktop/{id}/end` is called, the session is immediately invalidated:
+  - The session is removed from active sessions.
+  - Any associated WebSocket connection(s) are immediately closed.
+  - Subsequent requests using that session ID will fail.
+- Sessions also expire automatically when their TTL (time-to-live) is reached.
+- When a session expires or is ended, the WebSocket connection is closed gracefully.
+
+**Token invalidation:**
+- Tokens can be revoked via `SecurityManager.RevokeToken()` (internal API).
+- Revoked tokens fail validation immediately, even if they haven't expired.
+- When a session is ended, the associated token becomes invalid (session no longer exists).
+- Expired tokens are automatically removed and fail validation.
+- Token revocation is separate from session ending, but both cause WebSocket connections to close.
 
 ### Hello Message
 

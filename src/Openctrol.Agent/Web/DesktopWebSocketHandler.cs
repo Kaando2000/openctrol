@@ -25,6 +25,11 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     private readonly Channel<RemoteFrame> _frameQueue;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
     private readonly SemaphoreSlim _sendLock = new(1, 1); // Ensure only one frame send at a time
+    
+    // Input rate limiting: max 1000 events per second per session
+    private const int MaxInputEventsPerSecond = 1000;
+    private readonly Queue<DateTime> _inputEventTimestamps = new();
+    private readonly object _rateLimitLock = new();
 
     public DesktopWebSocketHandler(
         WebSocket webSocket,
@@ -57,7 +62,10 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     {
         try
         {
-            // Register this handler with session broker for immediate termination support
+            // Register this handler with session broker for immediate termination support.
+            // When SessionBroker.EndSession() is called, it will cancel this CancellationTokenSource,
+            // which will cause all three tasks (receive, send, expiry check) to detect cancellation
+            // and exit cleanly, closing the WebSocket connection.
             _sessionBroker.RegisterWebSocketHandler(_sessionId, _cancellationTokenSource);
             
             // Send hello message
@@ -256,38 +264,89 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             CancellationToken.None);
     }
 
+    /// <summary>
+    /// Maximum allowed WebSocket message size: 64KB.
+    /// Messages exceeding this limit will cause the connection to be closed immediately.
+    /// This prevents DoS attacks via oversized messages and limits memory usage.
+    /// </summary>
+    private const int MaxWebSocketMessageSize = 64 * 1024; // 64KB
+
+    /// <summary>
+    /// Receives and processes WebSocket messages with explicit size limit enforcement.
+    /// 
+    /// Message size enforcement:
+    /// - Messages are accumulated across multiple ReceiveAsync calls until EndOfMessage is true.
+    /// - The cumulative size is tracked and checked after each chunk.
+    /// - If totalSize exceeds MaxWebSocketMessageSize (64KB), the connection is immediately closed
+    ///   with WebSocketCloseStatus.MessageTooBig and a clear reason.
+    /// - A warning is logged with the session ID and actual message size.
+    /// </summary>
     private async Task ReceiveMessagesAsync(CancellationToken cancellationToken)
     {
-        var buffer = new byte[4096];
+        // Use ArrayPool for efficient buffer management
+        var buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(4096);
         try
         {
             while (_webSocket.State == WebSocketState.Open && !cancellationToken.IsCancellationRequested)
             {
+                // Accumulate message chunks until EndOfMessage
+                // This handles messages that span multiple ReceiveAsync calls
+                var messageBuffer = new List<byte>();
+                var totalSize = 0; // Track cumulative message size for limit enforcement
                 WebSocketReceiveResult result;
-                try
-                {
-                    result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
-                }
-                catch (OperationCanceledException)
-                {
-                    // Expected when cancellation is requested
-                    break;
-                }
-                catch (System.Net.WebSockets.WebSocketException ex)
-                {
-                    _logger.Error($"[WebSocket] WebSocket error in receive loop for session {_sessionId}: {ex.Message}", ex);
-                    break;
-                }
 
-                if (result.MessageType == WebSocketMessageType.Close)
+                do
                 {
-                    _logger.Debug($"[WebSocket] Received close message for session {_sessionId}");
-                    break;
-                }
+                    try
+                    {
+                        result = await _webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), cancellationToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Expected when cancellation is requested
+                        return;
+                    }
+                    catch (System.Net.WebSockets.WebSocketException ex)
+                    {
+                        _logger.Error($"[WebSocket] WebSocket error in receive loop for session {_sessionId}: {ex.Message}", ex);
+                        return;
+                    }
 
-                if (result.MessageType == WebSocketMessageType.Text)
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        _logger.Debug($"[WebSocket] Received close message for session {_sessionId}");
+                        return;
+                    }
+
+                    // MESSAGE SIZE LIMIT ENFORCEMENT:
+                    // Check cumulative size after each chunk. If limit exceeded, close connection immediately.
+                    totalSize += result.Count;
+                    if (totalSize > MaxWebSocketMessageSize)
+                    {
+                        _logger.Warn($"[WebSocket] Message size limit exceeded: received {totalSize} bytes (limit: {MaxWebSocketMessageSize} bytes) for session {_sessionId}. Closing connection.");
+                        try
+                        {
+                            await _webSocket.CloseAsync(
+                                WebSocketCloseStatus.MessageTooBig,
+                                $"Message size {totalSize} bytes exceeds limit of {MaxWebSocketMessageSize} bytes",
+                                CancellationToken.None);
+                        }
+                        catch
+                        {
+                            // Ignore errors when closing - connection is being terminated anyway
+                        }
+                        return; // Exit receive loop - connection is closed
+                    }
+
+                    // Accumulate message chunks
+                    messageBuffer.AddRange(buffer.Take(result.Count));
+
+                } while (!result.EndOfMessage); // Continue until complete message received
+
+                // Process complete message (only if within size limit)
+                if (result.MessageType == WebSocketMessageType.Text && messageBuffer.Count > 0)
                 {
-                    var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
+                    var message = Encoding.UTF8.GetString(messageBuffer.ToArray());
                     HandleMessage(message);
                 }
             }
@@ -295,6 +354,11 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         catch (Exception ex)
         {
             _logger.Error($"[WebSocket] Error in receive loop for session {_sessionId}", ex);
+        }
+        finally
+        {
+            // Return buffer to pool
+            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
         }
     }
 
@@ -370,6 +434,16 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                 return;
             }
             
+            // Check rate limiting for input messages (pointer/keyboard events)
+            bool isInputMessage = type == "pointer_move" || type == "pointer_button" || 
+                                 type == "pointer_wheel" || type == "key" || type == "text";
+            
+            if (isInputMessage && !CheckInputRateLimit())
+            {
+                _logger.Warn($"[WebSocket] Input rate limit exceeded for session {_sessionId}. Dropping message.");
+                return; // Drop the message silently to prevent DoS
+            }
+            
             switch (type)
             {
                 case "pointer_move":
@@ -408,6 +482,35 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         {
             _logger.Error($"[WebSocket] Error handling message in session {_sessionId}", ex);
             // Don't close connection - log error but continue processing
+        }
+    }
+
+    /// <summary>
+    /// Checks if input event is within rate limit (sliding window: max N events per second).
+    /// Returns true if event should be processed, false if rate limit exceeded.
+    /// </summary>
+    private bool CheckInputRateLimit()
+    {
+        lock (_rateLimitLock)
+        {
+            var now = DateTime.UtcNow;
+            var windowStart = now.AddSeconds(-1);
+
+            // Remove timestamps outside the 1-second window
+            while (_inputEventTimestamps.Count > 0 && _inputEventTimestamps.Peek() < windowStart)
+            {
+                _inputEventTimestamps.Dequeue();
+            }
+
+            // Check if we're at the limit
+            if (_inputEventTimestamps.Count >= MaxInputEventsPerSecond)
+            {
+                return false; // Rate limit exceeded
+            }
+
+            // Record this event
+            _inputEventTimestamps.Enqueue(now);
+            return true; // Within rate limit
         }
     }
 

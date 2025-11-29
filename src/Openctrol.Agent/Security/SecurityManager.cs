@@ -10,6 +10,7 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
     private readonly ILogger _logger;
     private readonly Dictionary<string, SessionToken> _tokens = new();
     private readonly Dictionary<string, (int count, DateTime windowStart)> _validationFailures = new();
+    private readonly HashSet<string> _revokedTokens = new(); // Track revoked tokens
     private readonly System.Threading.Timer _cleanupTimer;
     private readonly object _lock = new();
     private const int MaxFailuresPerWindow = 5;
@@ -68,19 +69,47 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
         return sessionToken;
     }
 
+    /// <summary>
+    /// Validates a desktop session token.
+    /// 
+    /// Token revocation semantics:
+    /// - If the token has been revoked via RevokeToken(), validation immediately fails.
+    /// - Revoked tokens are checked first, before any other validation.
+    /// - When a token is revoked, it is removed from active tokens and added to the revocation list.
+    /// - Revoked tokens will fail validation even if they haven't expired yet.
+    /// - This ensures that compromised or intentionally invalidated tokens cannot be used.
+    /// 
+    /// Token expiration:
+    /// - Tokens are also checked for expiration (ExpiresAt > now).
+    /// - Expired tokens are automatically removed from active tokens.
+    /// 
+    /// Rate limiting:
+    /// - Failed validation attempts are rate-limited to prevent brute force attacks.
+    /// </summary>
     public bool TryValidateDesktopSessionToken(string token, out SessionToken validated)
     {
         lock (_lock)
         {
-            // Check rate limiting
-            var clientId = GetClientIdFromToken(token); // Use token prefix as client identifier
-            if (IsRateLimited(clientId))
+            // TOKEN REVOCATION CHECK: Reject revoked tokens immediately
+            // Revoked tokens are invalid regardless of expiration status
+            if (_revokedTokens.Contains(token))
             {
-                _logger.Warn($"[Security] Rate limit exceeded for token validation from {clientId}");
+                _logger.Debug($"[Security] Token validation failed - token has been revoked");
                 validated = null!;
                 return false;
             }
 
+            // Check rate limiting using token hash (more reliable than prefix)
+            // This prevents collisions between different tokens with similar prefixes
+            var clientId = GetTokenHash(token);
+            if (IsRateLimited(clientId))
+            {
+                _logger.Warn($"[Security] Rate limit exceeded for token validation");
+                validated = null!;
+                return false;
+            }
+
+            // Check if token exists and is not expired
             if (_tokens.TryGetValue(token, out var sessionToken))
             {
                 if (sessionToken.ExpiresAt > DateTimeOffset.UtcNow)
@@ -101,6 +130,46 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
 
         validated = null!;
         return false;
+    }
+
+    /// <summary>
+    /// Revokes a session token, making it permanently invalid.
+    /// 
+    /// Revocation semantics:
+    /// - The token is immediately removed from active tokens.
+    /// - The token is added to the revocation list.
+    /// - Subsequent calls to TryValidateDesktopSessionToken() will fail for this token,
+    ///   even if the token hasn't expired yet.
+    /// - Revoked tokens remain in the revocation list until they expire and are cleaned up,
+    ///   or until the revocation list size limit is reached.
+    /// 
+    /// Use cases:
+    /// - Revoke tokens when a session is ended via POST /api/v1/sessions/desktop/{id}/end
+    /// - Revoke tokens when security breach is suspected
+    /// - Revoke tokens when user logs out or session is terminated
+    /// 
+    /// Note: This does NOT close WebSocket connections. To close WebSocket connections,
+    /// use SessionBroker.EndSession() which will cancel the WebSocket handler's cancellation token.
+    /// </summary>
+    public void RevokeToken(string token)
+    {
+        lock (_lock)
+        {
+            // Get HA ID before removing (for logging)
+            string? haId = null;
+            if (_tokens.TryGetValue(token, out var sessionToken))
+            {
+                haId = sessionToken.HaId;
+            }
+            
+            // Remove from active tokens - token is no longer valid
+            _tokens.Remove(token);
+            
+            // Add to revocation list - prevents token from being validated even if re-added
+            _revokedTokens.Add(token);
+            
+            _logger.Info($"[Security] Token revoked (HA ID: {haId ?? "unknown"})");
+        }
     }
 
     private bool IsRateLimited(string clientId)
@@ -143,10 +212,13 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
         }
     }
 
-    private static string GetClientIdFromToken(string token)
+    private static string GetTokenHash(string token)
     {
-        // Use first 8 characters of token as client identifier
-        return token.Length >= 8 ? token.Substring(0, 8) : token;
+        // Use a hash of the token as client identifier to avoid collisions
+        // This is more reliable than using token prefix
+        using var sha256 = System.Security.Cryptography.SHA256.Create();
+        var hashBytes = sha256.ComputeHash(System.Text.Encoding.UTF8.GetBytes(token));
+        return Convert.ToBase64String(hashBytes).Substring(0, 16); // Use first 16 chars of hash
     }
 
     private static string GenerateToken()
@@ -169,6 +241,19 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
             foreach (var token in expiredTokens)
             {
                 _tokens.Remove(token);
+                // Also remove from revocation list if present (cleanup)
+                _revokedTokens.Remove(token);
+            }
+
+            // Clean up old revocation entries (keep for 24 hours after token expiry)
+            // This prevents revocation list from growing indefinitely
+            // Note: We don't track revocation time, so we'll just limit the size
+            // In practice, revoked tokens are removed when expired tokens are cleaned up
+            if (_revokedTokens.Count > 1000)
+            {
+                // If revocation list gets too large, clear it (tokens should have expired by then)
+                _revokedTokens.Clear();
+                _logger.Debug("[Security] Cleared revocation list (size limit reached)");
             }
 
             if (expiredTokens.Count > 0)

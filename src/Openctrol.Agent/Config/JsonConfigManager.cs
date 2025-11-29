@@ -81,6 +81,14 @@ public sealed class JsonConfigManager : IConfigManager
                     throw new InvalidOperationException($"Certificate file not found: {config.CertPath}");
                 }
             }
+
+            // Security warning: API key validation
+            if (string.IsNullOrEmpty(config.ApiKey))
+            {
+                // Log warning but don't fail startup - allows development mode
+                // In production, ApiKey should always be configured
+                // This warning will be logged at startup by AgentHost
+            }
         }
     }
 
@@ -99,6 +107,23 @@ public sealed class JsonConfigManager : IConfigManager
                     {
                         config.AllowedHaIds = new List<string>();
                     }
+                    
+                    // Ensure AgentId is non-empty (generate if missing)
+                    if (string.IsNullOrEmpty(config.AgentId))
+                    {
+                        config.AgentId = Guid.NewGuid().ToString();
+                        // Persist the new AgentId back to config file
+                        try
+                        {
+                            var updatedJson = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+                            File.WriteAllText(_configPath, updatedJson);
+                        }
+                        catch
+                        {
+                            // Continue even if write fails - at least we have a valid AgentId in memory
+                        }
+                    }
+                    
                     return config;
                 }
             }
@@ -125,6 +150,38 @@ public sealed class JsonConfigManager : IConfigManager
         {
             var json = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_configPath, json);
+            
+            // Set restrictive file permissions: owner (Administrators/LocalSystem) only
+            // This prevents unauthorized users from reading the config file (which may contain encrypted passwords)
+            try
+            {
+                var fileInfo = new FileInfo(_configPath);
+                var fileSecurity = fileInfo.GetAccessControl();
+                
+                // Remove inherited permissions
+                fileSecurity.SetAccessRuleProtection(true, false);
+                
+                // Grant full control to Administrators and SYSTEM
+                var adminSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null);
+                var systemSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
+                
+                fileSecurity.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                    adminSid, 
+                    System.Security.AccessControl.FileSystemRights.FullControl, 
+                    System.Security.AccessControl.AccessControlType.Allow));
+                
+                fileSecurity.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                    systemSid, 
+                    System.Security.AccessControl.FileSystemRights.FullControl, 
+                    System.Security.AccessControl.AccessControlType.Allow));
+                
+                fileInfo.SetAccessControl(fileSecurity);
+            }
+            catch
+            {
+                // Log but don't fail - permissions may not be settable in all environments
+                // This is a security hardening measure, not a hard requirement
+            }
         }
         catch
         {
