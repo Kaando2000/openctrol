@@ -39,5 +39,11 @@ public sealed class EventLogLogger : ILogger
         var fullMessage = ex != null ? $"{message}: {ex}" : message;
         _eventLog?.WriteEntry(fullMessage, EventLogEntryType.Error);
     }
+
+    public void Debug(string message)
+    {
+        // Event log doesn't have a debug level, use Information
+        _eventLog?.WriteEntry(message, EventLogEntryType.Information);
+    }
 }
 

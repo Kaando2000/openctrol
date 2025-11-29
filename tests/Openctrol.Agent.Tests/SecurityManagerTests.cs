@@ -133,6 +133,7 @@ public class SecurityManagerTests
         
         public AgentConfig GetConfig() => _config;
         public void Reload() { }
+        public void ValidateConfig() { }
     }
 
     // Helper class for testing
@@ -141,6 +142,7 @@ public class SecurityManagerTests
         public void Info(string message) { }
         public void Warn(string message) { }
         public void Error(string message, Exception? ex = null) { }
+        public void Debug(string message) { }
     }
 }
 

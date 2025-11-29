@@ -20,10 +20,7 @@ E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\NAudio.Midi.dll
 E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\NAudio.Wasapi.dll
 E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\NAudio.WinForms.dll
 E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\NAudio.WinMM.dll
-E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\System.Reactive.dll
-E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\System.Runtime.InteropServices.WindowsRuntime.dll
 E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\System.ServiceProcess.ServiceController.dll
-E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\Zeroconf.dll
 E:\Proje\openctrol\src\Openctrol.Agent\bin\Debug\net8.0-windows\runtimes\win\lib\net8.0\System.ServiceProcess.ServiceController.dll
 E:\Proje\openctrol\src\Openctrol.Agent\obj\Debug\net8.0-windows\rjimswa.dswa.cache.json
 E:\Proje\openctrol\src\Openctrol.Agent\obj\Debug\net8.0-windows\rjsmrazor.dswa.cache.json

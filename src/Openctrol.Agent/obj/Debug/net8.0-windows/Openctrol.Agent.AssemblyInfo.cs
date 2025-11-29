@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("Openctrol.Agent")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+8eb1506c04d9953fc48e307c2fb36113f79cf6cd")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+1dfac4cbb2f6cabb0e53fec01b805677619dc209")]
 [assembly: System.Reflection.AssemblyProductAttribute("Openctrol.Agent")]
 [assembly: System.Reflection.AssemblyTitleAttribute("Openctrol.Agent")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

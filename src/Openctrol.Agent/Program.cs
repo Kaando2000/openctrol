@@ -11,7 +11,6 @@ using Openctrol.Agent.RemoteDesktop;
 using Openctrol.Agent.Input;
 using Openctrol.Agent.Power;
 using Openctrol.Agent.Audio;
-using Openctrol.Agent.Discovery;
 
 namespace Openctrol.Agent;
 
@@ -38,8 +37,6 @@ public static class Program
                 services.AddSingleton<ISessionBroker, SessionBroker>();
                 services.AddSingleton<IPowerManager, PowerManager>();
                 services.AddSingleton<IAudioManager, AudioManager>();
-                services.AddSingleton<IDiscoveryBroadcaster, MdnsDiscoveryBroadcaster>();
-                
                 services.AddSingleton<IControlApiServer, ControlApiServer>();
 
                 // Register AgentHost as both hosted service and uptime service

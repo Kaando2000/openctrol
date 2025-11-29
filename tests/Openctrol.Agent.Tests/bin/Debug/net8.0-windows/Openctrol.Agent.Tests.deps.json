@@ -942,17 +942,6 @@
           "System.Threading": "4.3.0"
         }
       },
-      "System.Reactive/4.0.0": {
-        "dependencies": {
-          "System.Runtime.InteropServices.WindowsRuntime": "4.3.0"
-        },
-        "runtime": {
-          "lib/netstandard2.0/System.Reactive.dll": {
-            "assemblyVersion": "4.0.0.0",
-            "fileVersion": "4.0.0.398"
-          }
-        }
-      },
       "System.Reflection/4.3.0": {
         "dependencies": {
           "Microsoft.NETCore.Platforms": "3.1.0",
@@ -1056,17 +1045,6 @@
           "System.Runtime.InteropServices": "4.3.0",
           "System.Threading": "4.3.0",
           "runtime.native.System": "4.3.0"
-        }
-      },
-      "System.Runtime.InteropServices.WindowsRuntime/4.3.0": {
-        "dependencies": {
-          "System.Runtime": "4.3.0"
-        },
-        "runtime": {
-          "lib/netstandard1.3/System.Runtime.InteropServices.WindowsRuntime.dll": {
-            "assemblyVersion": "4.0.2.0",
-            "fileVersion": "4.6.24705.1"
-          }
         }
       },
       "System.Runtime.Numerics/4.3.0": {
@@ -1372,23 +1350,11 @@
         }
       },
       "xunit.runner.visualstudio/2.5.3": {},
-      "Zeroconf/3.0.30": {
-        "dependencies": {
-          "System.Reactive": "4.0.0"
-        },
-        "runtime": {
-          "lib/netstandard2.0/Zeroconf.dll": {
-            "assemblyVersion": "3.0.0.0",
-            "fileVersion": "3.0.30.4637"
-          }
-        }
-      },
       "Openctrol.Agent/1.0.0": {
         "dependencies": {
           "Microsoft.Extensions.Hosting.WindowsServices": "8.0.0",
           "NAudio": "2.2.1",
-          "System.Drawing.Common": "8.0.0",
-          "Zeroconf": "3.0.30"
+          "System.Drawing.Common": "8.0.0"
         },
         "runtime": {
           "Openctrol.Agent.dll": {
@@ -2028,13 +1994,6 @@
       "path": "system.objectmodel/4.3.0",
       "hashPath": "system.objectmodel.4.3.0.nupkg.sha512"
     },
-    "System.Reactive/4.0.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-yaVAxT2Yl28p9+DupGwj2oPbIOYZUQimOQ+n7N7vML2oofIRj9BmcfD7DHc6FLrNah65EigOgG6U9VnwWEyz5g==",
-      "path": "system.reactive/4.0.0",
-      "hashPath": "system.reactive.4.0.0.nupkg.sha512"
-    },
     "System.Reflection/4.3.0": {
       "type": "package",
       "serviceable": true,
@@ -2132,13 +2091,6 @@
       "sha512": "sha512-cbz4YJMqRDR7oLeMRbdYv7mYzc++17lNhScCX0goO2XpGWdvAt60CGN+FHdePUEHCe/Jy9jUlvNAiNdM+7jsOw==",
       "path": "system.runtime.interopservices.runtimeinformation/4.3.0",
       "hashPath": "system.runtime.interopservices.runtimeinformation.4.3.0.nupkg.sha512"
-    },
-    "System.Runtime.InteropServices.WindowsRuntime/4.3.0": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-J4GUi3xZQLUBasNwZnjrffN8i5wpHrBtZoLG+OhRyGo/+YunMRWWtwoMDlUAIdmX0uRfpHIBDSV6zyr3yf00TA==",
-      "path": "system.runtime.interopservices.windowsruntime/4.3.0",
-      "hashPath": "system.runtime.interopservices.windowsruntime.4.3.0.nupkg.sha512"
     },
     "System.Runtime.Numerics/4.3.0": {
       "type": "package",
@@ -2349,13 +2301,6 @@
       "sha512": "sha512-HFFL6O+QLEOfs555SqHii48ovVa4CqGYanY+B32BjLpPptdE+wEJmCFNXlLHdEOD5LYeayb9EroaUpydGpcybg==",
       "path": "xunit.runner.visualstudio/2.5.3",
       "hashPath": "xunit.runner.visualstudio.2.5.3.nupkg.sha512"
-    },
-    "Zeroconf/3.0.30": {
-      "type": "package",
-      "serviceable": true,
-      "sha512": "sha512-V6IfB7utoGc/FhaGyKGfvOjC/4CUeTBNV1/atees8DUD0kMAgFzJVIoMqMJpY5fs01Z+97ZyVOkR5PyUtFP7Yg==",
-      "path": "zeroconf/3.0.30",
-      "hashPath": "zeroconf.3.0.30.nupkg.sha512"
     },
     "Openctrol.Agent/1.0.0": {
       "type": "project",

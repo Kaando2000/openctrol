@@ -24,6 +24,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     private bool _isSubscribed;
     private readonly Channel<RemoteFrame> _frameQueue;
     private readonly CancellationTokenSource _cancellationTokenSource = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1); // Ensure only one frame send at a time
 
     public DesktopWebSocketHandler(
         WebSocket webSocket,
@@ -142,6 +143,14 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                     break;
                 }
 
+                // Use semaphore to ensure only one send at a time (backpressure strategy)
+                // If a send is in progress, skip this frame (drop it)
+                if (!await _sendLock.WaitAsync(0, cancellationToken))
+                {
+                    // Send is in progress, drop this frame
+                    continue;
+                }
+
                 try
                 {
                     // Send frame in binary format: OFRA header + JPEG
@@ -161,10 +170,24 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                         true,
                         cancellationToken);
                 }
+                catch (OperationCanceledException)
+                {
+                    // Expected when cancellation is requested
+                    break;
+                }
+                catch (System.Net.WebSockets.WebSocketException ex)
+                {
+                    _logger.Error("WebSocket error sending frame", ex);
+                    break;
+                }
                 catch (Exception ex)
                 {
                     _logger.Error("Error sending frame to WebSocket client", ex);
                     break;
+                }
+                finally
+                {
+                    _sendLock.Release();
                 }
             }
         }
@@ -179,6 +202,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         finally
         {
             _frameQueue.Writer.Complete();
+            _sendLock.Dispose();
         }
     }
 
@@ -228,24 +252,36 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             if (result.MessageType == WebSocketMessageType.Text)
             {
                 var message = Encoding.UTF8.GetString(buffer, 0, result.Count);
-                await HandleMessageAsync(message);
+                HandleMessageAsync(message);
             }
         }
     }
 
-    private async Task HandleMessageAsync(string messageJson)
+    private void HandleMessageAsync(string messageJson)
     {
         try
         {
+            if (string.IsNullOrWhiteSpace(messageJson))
+            {
+                _logger.Debug("Received empty WebSocket message");
+                return;
+            }
+
             using var doc = JsonDocument.Parse(messageJson);
             var root = doc.RootElement;
 
             if (!root.TryGetProperty("type", out var typeElement))
             {
+                _logger.Debug("WebSocket message missing 'type' field");
                 return;
             }
 
             var type = typeElement.GetString();
+            if (string.IsNullOrEmpty(type))
+            {
+                _logger.Debug("WebSocket message has empty 'type' field");
+                return;
+            }
             
             switch (type)
             {
@@ -268,16 +304,23 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                     HandleMonitorSelect(root);
                     break;
                 case "quality":
-                    // Quality setting - not implemented yet
+                    // Quality setting - not implemented in v1, silently ignore
                     break;
                 default:
-                    _logger.Warn($"Unknown message type: {type}");
+                            _logger.Debug($"Unknown message type: {type}");
+                    // Log but don't close connection - just ignore unknown types
                     break;
             }
+        }
+        catch (JsonException ex)
+        {
+            _logger.Warn($"Invalid JSON in WebSocket message: {ex.Message}");
+            // Don't close connection for malformed JSON - just log and ignore
         }
         catch (Exception ex)
         {
             _logger.Error("Error handling WebSocket message", ex);
+            // Don't close connection - log error but continue processing
         }
     }
 

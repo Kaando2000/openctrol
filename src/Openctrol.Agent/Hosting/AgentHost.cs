@@ -2,7 +2,6 @@ using Microsoft.Extensions.Hosting;
 using Openctrol.Agent.Config;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 using Openctrol.Agent.Web;
-using Openctrol.Agent.Discovery;
 using Openctrol.Agent.RemoteDesktop;
 
 namespace Openctrol.Agent.Hosting;
@@ -12,7 +11,6 @@ public sealed class AgentHost : BackgroundService, IUptimeService
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
     private readonly IControlApiServer? _apiServer;
-    private readonly IDiscoveryBroadcaster? _discovery;
     private readonly IRemoteDesktopEngine? _remoteDesktopEngine;
     private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
 
@@ -23,13 +21,11 @@ public sealed class AgentHost : BackgroundService, IUptimeService
         IConfigManager configManager,
         ILogger logger,
         IControlApiServer? apiServer = null,
-        IDiscoveryBroadcaster? discovery = null,
         IRemoteDesktopEngine? remoteDesktopEngine = null)
     {
         _configManager = configManager;
         _logger = logger;
         _apiServer = apiServer;
-        _discovery = discovery;
         _remoteDesktopEngine = remoteDesktopEngine;
     }
 
@@ -39,9 +35,34 @@ public sealed class AgentHost : BackgroundService, IUptimeService
 
         try
         {
+            // Validate configuration
+            try
+            {
+                _configManager.ValidateConfig();
+            }
+            catch (InvalidOperationException ex)
+            {
+                _logger.Error($"Configuration validation failed: {ex.Message}", ex);
+                throw; // Fail startup on invalid config
+            }
+
             var config = _configManager.GetConfig();
+            
+            // Log configuration summary
+            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+            var haIdCount = config.AllowedHaIds?.Count ?? 0;
+            var tlsMode = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "HTTPS" : "HTTP";
+            
+            _logger.Info("=== Openctrol Agent Configuration ===");
+            _logger.Info($"Version: {version}");
             _logger.Info($"Agent ID: {config.AgentId}");
-            _logger.Info($"HTTP Port: {config.HttpPort}");
+            _logger.Info($"Mode: {tlsMode}");
+            _logger.Info($"Port: {config.HttpPort}");
+            _logger.Info($"Max Sessions: {config.MaxSessions}");
+            _logger.Info($"Target FPS: {config.TargetFps}");
+            _logger.Info($"HA IDs in allowlist: {haIdCount}");
+            _logger.Info($"Audio subsystem: {(System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "Available" : "Not available")}");
+            _logger.Info("=====================================");
 
             // Start remote desktop engine if available
             if (_remoteDesktopEngine != null)
@@ -65,16 +86,6 @@ public sealed class AgentHost : BackgroundService, IUptimeService
                 _logger.Warn("API server not available (stub)");
             }
 
-            // Start discovery if available
-            if (_discovery != null)
-            {
-                _discovery.Start();
-                _logger.Info("Discovery broadcaster started");
-            }
-            else
-            {
-                _logger.Warn("Discovery broadcaster not available (stub)");
-            }
 
             _logger.Info("Openctrol Agent started successfully");
 
@@ -95,11 +106,6 @@ public sealed class AgentHost : BackgroundService, IUptimeService
     {
         _logger.Info("Openctrol Agent stopping...");
 
-        if (_discovery != null)
-        {
-            _discovery.Stop();
-            _logger.Info("Discovery broadcaster stopped");
-        }
 
         if (_apiServer != null)
         {

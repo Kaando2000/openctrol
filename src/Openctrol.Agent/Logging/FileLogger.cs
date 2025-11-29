@@ -34,6 +34,11 @@ public sealed class FileLogger : ILogger
         WriteLog("ERROR", fullMessage);
     }
 
+    public void Debug(string message)
+    {
+        WriteLog("DEBUG", message);
+    }
+
     private void WriteLog(string level, string message)
     {
         lock (_lock)

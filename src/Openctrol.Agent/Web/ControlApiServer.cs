@@ -97,6 +97,7 @@ public sealed class ControlApiServer : IControlApiServer
         // Health endpoint
         _app.MapGet("/api/v1/health", () =>
         {
+            var config = _configManager.GetConfig();
             var activeSessions = _sessionBroker?.GetActiveSessions().Count ?? 0;
             var remoteDesktopStatus = _remoteDesktopEngine?.GetStatus();
 
@@ -131,7 +132,7 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_sessionBroker == null || _securityManager == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Session broker or security manager not available" }, statusCode: 503);
             }
 
             try
@@ -142,12 +143,21 @@ public sealed class ControlApiServer : IControlApiServer
 
                 if (request == null || string.IsNullOrEmpty(request.HaId))
                 {
-                    return Results.BadRequest();
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "HA ID is required" }, statusCode: 400);
                 }
 
-                var ttl = TimeSpan.FromSeconds(request.TtlSeconds);
+                // Validate HA ID is allowed
+                if (!_securityManager.IsHaAllowed(request.HaId))
+                {
+                    _logger.Warn($"Rejected session creation request from unauthorized HA ID: {request.HaId}");
+                    return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "HA ID not allowed" }, statusCode: 401);
+                }
+
+                var ttl = TimeSpan.FromSeconds(Math.Max(60, Math.Min(3600, request.TtlSeconds))); // Clamp between 60s and 1h
                 var token = _securityManager.IssueDesktopSessionToken(request.HaId, ttl);
                 var session = _sessionBroker.StartDesktopSession(request.HaId, ttl);
+
+                _logger.Info($"Desktop session created: {session.SessionId} for HA ID: {request.HaId}");
 
                 var wsScheme = context.Request.Scheme == "https" ? "wss" : "ws";
                 var wsUrl = $"{wsScheme}://{context.Request.Host}/ws/desktop?sess={session.SessionId}&token={token.Token}";
@@ -164,7 +174,7 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error("Error creating desktop session", ex);
-                return Results.StatusCode(500);
+                return Results.Json(new ErrorResponse { Error = "session_creation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
@@ -173,11 +183,25 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_sessionBroker == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Session broker not available" }, statusCode: 503);
             }
 
-            _sessionBroker.EndSession(id);
-            return Results.Ok();
+            if (string.IsNullOrEmpty(id))
+            {
+                return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Session ID is required" }, statusCode: 400);
+            }
+
+            try
+            {
+                _sessionBroker.EndSession(id);
+                _logger.Info($"Desktop session ended: {id}");
+                return Results.Ok();
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Error ending session {id}", ex);
+                return Results.Json(new ErrorResponse { Error = "session_end_failed", Details = ex.Message }, statusCode: 500);
+            }
         });
 
         // Power control
@@ -185,7 +209,7 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_powerManager == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Power manager not available" }, statusCode: 503);
             }
 
             try
@@ -196,25 +220,28 @@ public sealed class ControlApiServer : IControlApiServer
 
                 if (request == null || string.IsNullOrEmpty(request.Action))
                 {
-                    return Results.BadRequest();
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Action is required (restart or shutdown)" }, statusCode: 400);
                 }
 
-                switch (request.Action.ToLower())
+                var action = request.Action.ToLower();
+                switch (action)
                 {
                     case "restart":
+                        _logger.Warn($"System restart requested via API");
                         _powerManager.Restart();
                         return Results.Ok();
                     case "shutdown":
+                        _logger.Warn($"System shutdown requested via API");
                         _powerManager.Shutdown();
                         return Results.Ok();
                     default:
-                        return Results.BadRequest();
+                        return Results.Json(new ErrorResponse { Error = "invalid_request", Details = $"Unknown action: {request.Action}. Must be 'restart' or 'shutdown'" }, statusCode: 400);
                 }
             }
             catch (Exception ex)
             {
                 _logger.Error("Error handling power request", ex);
-                return Results.StatusCode(500);
+                return Results.Json(new ErrorResponse { Error = "power_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
@@ -223,7 +250,7 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_audioManager == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
             }
 
             try
@@ -245,7 +272,8 @@ public sealed class ControlApiServer : IControlApiServer
                         Id = s.Id,
                         Name = s.Name,
                         Volume = s.Volume,
-                        Muted = s.Muted
+                        Muted = s.Muted,
+                        OutputDeviceId = s.OutputDeviceId
                     }).ToList()
                 };
 
@@ -254,7 +282,7 @@ public sealed class ControlApiServer : IControlApiServer
             catch (Exception ex)
             {
                 _logger.Error("Error getting audio state", ex);
-                return Results.StatusCode(500);
+                return Results.Json(new ErrorResponse { Error = "audio_state_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
@@ -263,7 +291,7 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_audioManager == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
             }
 
             try
@@ -274,16 +302,41 @@ public sealed class ControlApiServer : IControlApiServer
 
                 if (request == null || string.IsNullOrEmpty(request.DeviceId))
                 {
-                    return Results.BadRequest();
+                    return Results.Json(new ErrorResponse { Error = "invalid_audio_device_request", Details = "Device ID is required" }, statusCode: 400);
                 }
 
-                _audioManager.SetDeviceVolume(request.DeviceId, request.Volume, request.Muted);
+                // Validate volume range
+                var volume = Math.Clamp(request.Volume, 0f, 1f);
+
+                // Set device volume
+                _audioManager.SetDeviceVolume(request.DeviceId, volume, request.Muted);
+
+                // If SetDefault is true, also set as default device
+                if (request.SetDefault)
+                {
+                    try
+                    {
+                        _audioManager.SetDefaultOutputDevice(request.DeviceId);
+                        _logger.Info($"Device {request.DeviceId} set as default output device");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error($"Error setting default device: {request.DeviceId}", ex);
+                        return Results.Json(new ErrorResponse { Error = "default_device_change_failed", Details = ex.Message }, statusCode: 500);
+                    }
+                }
+
                 return Results.Ok();
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.Warn($"Invalid audio device request: {ex.Message}");
+                return Results.Json(new ErrorResponse { Error = "invalid_audio_device_request", Details = ex.Message }, statusCode: 400);
             }
             catch (Exception ex)
             {
                 _logger.Error("Error setting device volume", ex);
-                return Results.StatusCode(500);
+                return Results.Json(new ErrorResponse { Error = "audio_device_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 
@@ -292,7 +345,7 @@ public sealed class ControlApiServer : IControlApiServer
         {
             if (_audioManager == null)
             {
-                return Results.StatusCode(503);
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
             }
 
             try
@@ -303,16 +356,41 @@ public sealed class ControlApiServer : IControlApiServer
 
                 if (request == null || string.IsNullOrEmpty(request.SessionId))
                 {
-                    return Results.BadRequest();
+                    return Results.Json(new ErrorResponse { Error = "invalid_audio_session_request", Details = "Session ID is required" }, statusCode: 400);
                 }
 
-                _audioManager.SetSessionVolume(request.SessionId, request.Volume, request.Muted);
+                // Validate volume range
+                var volume = Math.Clamp(request.Volume, 0f, 1f);
+
+                // Set session volume
+                _audioManager.SetSessionVolume(request.SessionId, volume, request.Muted);
+
+                // If OutputDeviceId is provided, route session to that device
+                if (!string.IsNullOrEmpty(request.OutputDeviceId))
+                {
+                    try
+                    {
+                        _audioManager.SetSessionOutputDevice(request.SessionId, request.OutputDeviceId);
+                        _logger.Info($"Session {request.SessionId} routed to device {request.OutputDeviceId}");
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.Error($"Error routing session {request.SessionId} to device {request.OutputDeviceId}", ex);
+                        return Results.Json(new ErrorResponse { Error = "session_device_change_failed", Details = ex.Message }, statusCode: 500);
+                    }
+                }
+
                 return Results.Ok();
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.Warn($"Invalid audio session request: {ex.Message}");
+                return Results.Json(new ErrorResponse { Error = "invalid_audio_session_request", Details = ex.Message }, statusCode: 400);
             }
             catch (Exception ex)
             {
                 _logger.Error("Error setting session volume", ex);
-                return Results.StatusCode(500);
+                return Results.Json(new ErrorResponse { Error = "audio_session_operation_failed", Details = ex.Message }, statusCode: 500);
             }
         });
 

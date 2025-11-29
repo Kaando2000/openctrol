@@ -53,5 +53,20 @@ public sealed class CompositeLogger : ILogger
             }
         }
     }
+
+    public void Debug(string message)
+    {
+        foreach (var logger in _loggers)
+        {
+            try
+            {
+                logger.Debug(message);
+            }
+            catch
+            {
+                // Continue with other loggers if one fails
+            }
+        }
+    }
 }
 

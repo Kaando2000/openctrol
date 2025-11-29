@@ -331,13 +331,11 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                         var oldBitmap = SelectObject(hdcMem, hBitmap);
                         
                         // Calculate source coordinates for the selected monitor
-                        // For multi-monitor setups, we need to capture from the correct position
-                        // For now, capture from (0,0) which works for primary monitor
-                        // TODO: Support capturing from non-primary monitors by using monitor bounds
+                        // For multi-monitor setups, capture from the correct position based on monitor bounds
                         var srcX = 0;
                         var srcY = 0;
                         
-                        // If not primary monitor, try to get its position
+                        // If not primary monitor, get its position from screen bounds
                         if (!selectedMonitor.IsPrimary)
                         {
                             var screens = System.Windows.Forms.Screen.AllScreens;

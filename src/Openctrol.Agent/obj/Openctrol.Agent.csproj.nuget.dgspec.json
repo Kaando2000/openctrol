@@ -62,10 +62,6 @@
             "System.Drawing.Common": {
               "target": "Package",
               "version": "[8.0.0, )"
-            },
-            "Zeroconf": {
-              "target": "Package",
-              "version": "[3.0.30, )"
             }
           },
           "imports": [

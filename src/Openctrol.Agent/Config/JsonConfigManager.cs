@@ -1,3 +1,4 @@
+using System.Security.Principal;
 using System.Text.Json;
 
 namespace Openctrol.Agent.Config;
@@ -30,6 +31,56 @@ public sealed class JsonConfigManager : IConfigManager
         lock (_lock)
         {
             _config = LoadOrCreateDefault();
+        }
+    }
+
+    public void ValidateConfig()
+    {
+        lock (_lock)
+        {
+            var config = _config;
+            
+            // Validate HttpPort
+            if (config.HttpPort <= 0)
+            {
+                throw new InvalidOperationException($"Invalid HttpPort: {config.HttpPort}. Must be greater than 0");
+            }
+            
+            // Ports < 1024 require administrator privileges on Windows
+            if (config.HttpPort < 1024)
+            {
+                if (!IsRunningAsAdministrator())
+                {
+                    throw new InvalidOperationException($"Invalid HttpPort: {config.HttpPort}. Ports below 1024 require administrator privileges. Either use a port >= 1024 or run the service as administrator.");
+                }
+            }
+
+            // Validate MaxSessions
+            if (config.MaxSessions < 1)
+            {
+                throw new InvalidOperationException($"Invalid MaxSessions: {config.MaxSessions}. Must be >= 1");
+            }
+
+            // Validate TargetFps
+            if (config.TargetFps < 1 || config.TargetFps > 120)
+            {
+                throw new InvalidOperationException($"Invalid TargetFps: {config.TargetFps}. Must be between 1 and 120");
+            }
+
+            // Validate AgentId
+            if (string.IsNullOrEmpty(config.AgentId))
+            {
+                throw new InvalidOperationException("AgentId is required and cannot be empty");
+            }
+
+            // Validate certificate if configured
+            if (!string.IsNullOrEmpty(config.CertPath))
+            {
+                if (!File.Exists(config.CertPath))
+                {
+                    throw new InvalidOperationException($"Certificate file not found: {config.CertPath}");
+                }
+            }
         }
     }
 
@@ -80,6 +131,21 @@ public sealed class JsonConfigManager : IConfigManager
         }
 
         return defaultConfig;
+    }
+
+    private static bool IsRunningAsAdministrator()
+    {
+        try
+        {
+            var identity = WindowsIdentity.GetCurrent();
+            var principal = new WindowsPrincipal(identity);
+            return principal.IsInRole(WindowsBuiltInRole.Administrator);
+        }
+        catch
+        {
+            // If we can't determine, assume not admin for safety
+            return false;
+        }
     }
 }
 

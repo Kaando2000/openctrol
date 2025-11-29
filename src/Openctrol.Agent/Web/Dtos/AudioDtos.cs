@@ -22,6 +22,7 @@ public sealed class AudioSessionInfoDto
     public string Name { get; init; } = "";
     public float Volume { get; init; }
     public bool Muted { get; init; }
+    public string OutputDeviceId { get; init; } = ""; // Device ID this session is routed to
 }
 
 public sealed class SetDeviceVolumeRequest
@@ -29,6 +30,7 @@ public sealed class SetDeviceVolumeRequest
     public string DeviceId { get; init; } = "";
     public float Volume { get; init; }
     public bool Muted { get; init; }
+    public bool SetDefault { get; init; } = false; // If true, also set as default output device
 }
 
 public sealed class SetSessionVolumeRequest
@@ -36,10 +38,23 @@ public sealed class SetSessionVolumeRequest
     public string SessionId { get; init; } = "";
     public float Volume { get; init; }
     public bool Muted { get; init; }
+    public string? OutputDeviceId { get; init; } = null; // Optional: route session to specific device
 }
 
 public sealed class SetDefaultDeviceRequest
 {
     public string DeviceId { get; init; } = "";
+}
+
+public sealed class SetSessionDeviceRequest
+{
+    public string SessionId { get; init; } = "";
+    public string DeviceId { get; init; } = "";
+}
+
+public sealed class ErrorResponse
+{
+    public string Error { get; init; } = "";
+    public string Details { get; init; } = "";
 }
 

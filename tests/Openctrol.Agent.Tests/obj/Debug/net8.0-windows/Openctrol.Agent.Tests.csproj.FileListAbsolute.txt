@@ -30,14 +30,11 @@ E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\NAudio.W
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\NAudio.WinMM.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\Newtonsoft.Json.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\NuGet.Frameworks.dll
-E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\System.Reactive.dll
-E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\System.Runtime.InteropServices.WindowsRuntime.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\System.ServiceProcess.ServiceController.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\xunit.abstractions.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\xunit.assert.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\xunit.core.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\xunit.execution.dotnet.dll
-E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\Zeroconf.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\cs\Microsoft.TestPlatform.CoreUtilities.resources.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\cs\Microsoft.VisualStudio.TestPlatform.ObjectModel.resources.dll
 E:\Proje\openctrol\tests\Openctrol.Agent.Tests\bin\Debug\net8.0-windows\de\Microsoft.TestPlatform.CoreUtilities.resources.dll

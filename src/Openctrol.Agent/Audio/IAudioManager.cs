@@ -6,5 +6,6 @@ public interface IAudioManager
     void SetDeviceVolume(string deviceId, float volume, bool muted);
     void SetSessionVolume(string sessionId, float volume, bool muted);
     void SetDefaultOutputDevice(string deviceId);
+    void SetSessionOutputDevice(string sessionId, string deviceId);
 }
 
