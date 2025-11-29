@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project ToolsVersion="4.0" DefaultTargets="Build" InitialTargets="EnsureWixToolsetInstalled" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Release</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">x64</Platform>
+    <ProductVersion>1.0.0</ProductVersion>
+    <ProjectGuid>F8A3B2C1-4D5E-6F7A-8B9C-0D1E2F3A4B5C</ProjectGuid>
+    <SchemaVersion>2.0</SchemaVersion>
+    <OutputName>Openctrol.Agent.Setup</OutputName>
+    <OutputType>Package</OutputType>
+    <WixTargetsPath Condition=" '$(WixTargetsPath)' == '' AND '$(MSBuildExtensionsPath32)' != '' ">$(MSBuildExtensionsPath32)\Microsoft\WiX\v3.x\Wix.targets</WixTargetsPath>
+    <WixTargetsPath Condition=" '$(WixTargetsPath)' == '' ">$(MSBuildExtensionsPath)\Microsoft\WiX\v3.x\Wix.targets</WixTargetsPath>
+  </PropertyGroup>
+  
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x64' ">
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
+    <DefineConstants>$(DefineConstants);</DefineConstants>
+  </PropertyGroup>
+  
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|x86' ">
+    <OutputPath>bin\$(Configuration)\</OutputPath>
+    <IntermediateOutputPath>obj\$(Configuration)\</IntermediateOutputPath>
+    <DefineConstants>$(DefineConstants);</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Product.wxs" />
+    <Compile Include="UI\ConfigDlg.wxs" />
+    <Compile Include="UI\FirewallDlg.wxs" />
+    <Compile Include="UI\SummaryDlg.wxs" />
+    <Compile Include="UI\ValidationErrorDlg.wxs" />
+    <Compile Include="UI\FinishDlg.wxs" />
+    <Compile Include="HarvestFiles.wxs" />
+  </ItemGroup>
+  
+  <ItemGroup>
+    <ProjectReference Include="CustomActions\CustomActions.csproj">
+      <Name>CustomActions</Name>
+    </ProjectReference>
+  </ItemGroup>
+  
+  <ItemGroup>
+    <WixVariable Include="AgentPublishDir" Value="$(MSBuildProjectDirectory)\..\..\src\Openctrol.Agent\bin\Release\net8.0-windows\publish\" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <WixExtension Include="WixUIExtension">
+      <HintPath>$(WixExtDir)\WixUIExtension.dll</HintPath>
+      <Name>WixUIExtension</Name>
+    </WixExtension>
+    <WixExtension Include="WixUtilExtension">
+      <HintPath>$(WixExtDir)\WixUtilExtension.dll</HintPath>
+      <Name>WixUtilExtension</Name>
+    </WixExtension>
+    <WixExtension Include="WixNetFxExtension">
+      <HintPath>$(WixExtDir)\WixNetFxExtension.dll</HintPath>
+      <Name>WixNetFxExtension</Name>
+    </WixExtension>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Security" />
+    <Reference Include="System.Text.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Content Include="..\..\LICENSE.md" Condition="Exists('..\..\LICENSE.md')">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <Target Name="EnsureWixToolsetInstalled" Condition=" '$(WixTargetsImported)' != 'true' ">
+    <Error Text="The WiX Toolset v3.11 or later must be installed to build this project. Download it from https://wixtoolset.org/" />
+  </Target>
+
+  <Import Project="$(WixTargetsPath)" Condition=" '$(WixTargetsImported)' != 'true' " />
+  
+  <!-- Reference to the agent project output -->
+  <Target Name="BeforeBuild">
+    <PropertyGroup>
+      <AgentPublishDir>$(MSBuildProjectDirectory)\..\..\src\Openctrol.Agent\bin\Release\net8.0-windows\publish\</AgentPublishDir>
+    </PropertyGroup>
+    <Message Text="Agent publish directory: $(AgentPublishDir)" Importance="high" />
+    
+    <!-- Harvest files from publish directory using heat.exe -->
+    <Exec Command="&quot;$(WixToolPath)heat.exe&quot; dir &quot;$(AgentPublishDir)&quot; -cg AgentDependencies -gg -sfrag -srd -dr INSTALLFOLDER -var var.AgentPublishDir -out HarvestFiles.wxs -t $(MSBuildProjectDirectory)\HarvestFiles.xslt"
+          Condition="Exists('$(AgentPublishDir)')" 
+          IgnoreExitCode="false" />
+  </Target>
+</Project>
+

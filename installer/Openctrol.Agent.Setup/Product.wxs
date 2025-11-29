@@ -1,0 +1,218 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi"
+     xmlns:util="http://schemas.microsoft.com/wix/UtilExtension"
+     xmlns:ui="http://schemas.microsoft.com/wix/UIExtension">
+  
+  <?define ProductName = "Openctrol Agent" ?>
+  <?define ProductVersion = "1.0.0" ?>
+  <?define ProductManufacturer = "Openctrol" ?>
+  <?define ProductUpgradeCode = "A1B2C3D4-E5F6-4A5B-8C9D-0E1F2A3B4C5D" ?>
+  <?define ServiceName = "OpenctrolAgent" ?>
+  <?define ServiceDisplayName = "Openctrol Agent" ?>
+  <?define ServiceDescription = "Provides remote control and desktop streaming for Home Assistant over the local network." ?>
+
+  <Product Id="*" 
+           Name="$(var.ProductName)" 
+           Language="1033" 
+           Version="$(var.ProductVersion)" 
+           Manufacturer="$(var.ProductManufacturer)" 
+           UpgradeCode="$(var.ProductUpgradeCode)">
+    
+    <Package InstallerVersion="200" 
+             Compressed="yes" 
+             InstallScope="perMachine"
+             Description="Openctrol Windows Agent Installer"
+             Comments="Installs Openctrol Agent as a Windows Service" />
+
+    <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- UI Properties -->
+    <Property Id="WIXUI_INSTALLDIR" Value="INSTALLFOLDER" />
+    <Property Id="INSTALLFOLDER" Value="C:\Program Files\Openctrol" />
+    
+    <!-- Configuration Properties -->
+    <Property Id="CONFIG_PORT" Value="44325" />
+    <Property Id="CONFIG_USEHTTPS" Value="0" />
+    <Property Id="CONFIG_CERTPATH" />
+    <Property Id="CONFIG_CERTPASSWORD" Secure="yes" />
+    <Property Id="CONFIG_APIKEY" Secure="yes" />
+    <Property Id="CONFIG_AGENTID" />
+    <Property Id="CONFIG_CREATEFIREWALL" Value="1" />
+    <Property Id="CONFIG_DELETEPROGRAMDATA" Value="0" />
+    <Property Id="VALIDCONFIG" Value="0" />
+    <Property Id="VALIDCONFIGERROR" />
+    
+    <!-- Secure properties are already defined above with Secure="yes" -->
+
+    <!-- UI Definition -->
+    <UIRef Id="WixUI_InstallDir" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+    
+    <!-- Custom UI Dialogs -->
+    <UI>
+      <DialogRef Id="BrowseDlg" />
+      <DialogRef Id="ConfigDlg" />
+      <DialogRef Id="FirewallDlg" />
+      <DialogRef Id="SummaryDlg" />
+      <DialogRef Id="ValidationErrorDlg" />
+      <DialogRef Id="FinishDlg" />
+      
+      <!-- Customize the flow: InstallDirDlg -> ConfigDlg (custom dialogs handle their own navigation) -->
+      <Publish Dialog="InstallDirDlg" Control="Next" Event="NewDialog" Value="ConfigDlg">1</Publish>
+      <!-- ConfigDlg, FirewallDlg, SummaryDlg, and FinishDlg have their own Publish elements defined in their dialog files -->
+    </UI>
+
+    <!-- Features -->
+    <Feature Id="ProductFeature" Title="Openctrol Agent" Level="1">
+      <ComponentRef Id="ProductComponents" />
+      <ComponentGroupRef Id="AgentDependencies" />
+      <ComponentRef Id="ProgramDataFolder" />
+      <ComponentRef Id="EventLogSource" />
+      <ComponentRef Id="ServiceComponent" />
+    </Feature>
+
+    <!-- Components -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="INSTALLFOLDER" Name="Openctrol">
+          <Component Id="ProductComponents" Guid="B1C2D3E4-F5A6-4B7C-8D9E-0F1A2B3C4D5E">
+            <File Id="AgentExe" 
+                  Source="$(var.AgentPublishDir)Openctrol.Agent.exe" 
+                  KeyPath="yes" />
+            <File Id="AgentDll" 
+                  Source="$(var.AgentPublishDir)Openctrol.Agent.dll" />
+            <File Id="AgentPdb" 
+                  Source="$(var.AgentPublishDir)Openctrol.Agent.pdb" />
+            <!-- Runtime files (runtimeconfig.json, deps.json, and DLLs) are included via HarvestFiles.wxs -->
+          </Component>
+        </Directory>
+      </Directory>
+      
+      <Directory Id="CommonAppDataFolder">
+        <Directory Id="ProgramDataOpenctrol" Name="Openctrol">
+          <Component Id="ProgramDataFolder" Guid="C2D3E4F5-A6B7-4C8D-9E0F-1A2B3C4D5E6F">
+            <CreateFolder>
+              <util:PermissionEx User="Administrators" GenericAll="yes" />
+              <util:PermissionEx User="SYSTEM" GenericAll="yes" />
+            </CreateFolder>
+          </Component>
+        </Directory>
+      </Directory>
+    </Directory>
+
+    <!-- Event Log Source -->
+    <Component Id="EventLogSource" Guid="D3E4F5A6-B7C8-4D9E-0F1A-2B3C4D5E6F7A" Directory="INSTALLFOLDER">
+      <util:EventSource Log="Application" 
+                        EventMessageFile="[INSTALLFOLDER]Openctrol.Agent.exe" 
+                        Name="OpenctrolAgent" />
+    </Component>
+
+    <!-- Service Installation -->
+    <Component Id="ServiceComponent" Guid="E4F5A6B7-C8D9-4E0F-1A2B-3C4D5E6F7A8B" Directory="INSTALLFOLDER">
+      <File Id="ServiceExe" Source="$(var.AgentPublishDir)Openctrol.Agent.exe" KeyPath="yes" />
+      <ServiceInstall Id="ServiceInstall"
+                      Type="ownProcess"
+                      Name="$(var.ServiceName)"
+                      DisplayName="$(var.ServiceDisplayName)"
+                      Description="$(var.ServiceDescription)"
+                      Start="auto"
+                      Account="LocalSystem"
+                      ErrorControl="normal"
+                      Interactive="no">
+        <ServiceDependency Id="Tcpip" />
+      </ServiceInstall>
+      <ServiceControl Id="ServiceControl"
+                      Name="$(var.ServiceName)"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+    </Component>
+
+    <!-- Custom Actions -->
+    <CustomAction Id="ConfigCustomAction"
+                  BinaryKey="ConfigCustomActionBinary"
+                  DllEntry="CreateConfigFile"
+                  Execute="deferred"
+                  Impersonate="no" />
+    
+    <CustomAction Id="ServiceCustomAction"
+                  BinaryKey="ServiceCustomActionBinary"
+                  DllEntry="InstallService"
+                  Execute="deferred"
+                  Impersonate="no" />
+    
+    <CustomAction Id="FirewallCustomAction"
+                  BinaryKey="FirewallCustomActionBinary"
+                  DllEntry="CreateFirewallRule"
+                  Execute="deferred"
+                  Impersonate="no" />
+    
+    <CustomAction Id="UninstallFirewallCustomAction"
+                  BinaryKey="FirewallCustomActionBinary"
+                  DllEntry="RemoveFirewallRule"
+                  Execute="deferred"
+                  Impersonate="no" />
+    
+    <CustomAction Id="UninstallProgramDataCustomAction"
+                  BinaryKey="ConfigCustomActionBinary"
+                  DllEntry="DeleteProgramData"
+                  Execute="deferred"
+                  Impersonate="no" />
+    
+    <CustomAction Id="ValidateConfig"
+                  BinaryKey="ValidationCustomActionBinary"
+                  DllEntry="ValidateConfig"
+                  Execute="immediate"
+                  Return="check" />
+    
+    <CustomAction Id="GenerateApiKey"
+                  BinaryKey="ValidationCustomActionBinary"
+                  DllEntry="GenerateApiKey"
+                  Execute="immediate"
+                  Return="check" />
+
+    <!-- Custom Action Properties -->
+    <CustomAction Id="SetConfigCustomActionData"
+                  Property="ConfigCustomAction"
+                  Value='INSTALLFOLDER=[INSTALLFOLDER];PORT=[CONFIG_PORT];USEHTTPS=[CONFIG_USEHTTPS];CERTPATH=[CONFIG_CERTPATH];CERTPASSWORD=[CONFIG_CERTPASSWORD];APIKEY=[CONFIG_APIKEY];AGENTID=[CONFIG_AGENTID]' />
+    
+    <CustomAction Id="SetServiceCustomActionData"
+                  Property="ServiceCustomAction"
+                  Value='INSTALLFOLDER=[INSTALLFOLDER];SERVICENAME=$(var.ServiceName)' />
+    
+    <CustomAction Id="SetFirewallCustomActionData"
+                  Property="FirewallCustomAction"
+                  Value='PORT=[CONFIG_PORT];CREATEFIREWALL=[CONFIG_CREATEFIREWALL]' />
+    
+    <CustomAction Id="SetUninstallProgramDataCustomActionData"
+                  Property="UninstallProgramDataCustomAction"
+                  Value='DELETEPROGRAMDATA=[CONFIG_DELETEPROGRAMDATA]' />
+
+    <!-- Install Sequence -->
+    <InstallExecuteSequence>
+      <Custom Action="SetConfigCustomActionData" Before="ConfigCustomAction" />
+      <Custom Action="ConfigCustomAction" After="InstallFiles">NOT Installed</Custom>
+      
+      <Custom Action="SetServiceCustomActionData" Before="ServiceCustomAction" />
+      <Custom Action="ServiceCustomAction" After="InstallServices">NOT Installed</Custom>
+      
+      <Custom Action="SetFirewallCustomActionData" Before="FirewallCustomAction" />
+      <Custom Action="FirewallCustomAction" After="ServiceCustomAction">NOT Installed AND CONFIG_CREATEFIREWALL="1"</Custom>
+      
+      <Custom Action="UninstallFirewallCustomAction" Before="RemoveFiles">REMOVE="ALL"</Custom>
+      <Custom Action="SetUninstallProgramDataCustomActionData" Before="UninstallProgramDataCustomAction" />
+      <Custom Action="UninstallProgramDataCustomAction" After="RemoveFiles">REMOVE="ALL" AND CONFIG_DELETEPROGRAMDATA="1"</Custom>
+    </InstallExecuteSequence>
+
+    <!-- Binary References for Custom Actions -->
+    <Binary Id="ConfigCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
+    <Binary Id="ServiceCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
+    <Binary Id="FirewallCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
+    <Binary Id="ValidationCustomActionBinary" SourceFile="$(var.CustomActions.TargetPath)" />
+  </Product>
+
+  <!-- Fragment for Agent Dependencies -->
+  <!-- ComponentGroup AgentDependencies is generated by heat.exe in HarvestFiles.wxs -->
+</Wix>
+

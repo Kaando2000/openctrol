@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <UI>
+      <Dialog Id="ConfigDlg" Width="370" Height="270" Title="[ProductName] Configuration">
+        <Control Id="Next" Type="PushButton" X="236" Y="243" Width="56" Height="17" Default="yes" Text="&amp;Next >">
+          <Publish Event="DoAction" Value="ValidateConfig">1</Publish>
+          <Publish Event="SpawnDialog" Value="ValidationErrorDlg">VALIDCONFIG = "0"</Publish>
+          <Publish Event="NewDialog" Value="FirewallDlg">VALIDCONFIG = "1"</Publish>
+        </Control>
+        <Control Id="Back" Type="PushButton" X="180" Y="243" Width="56" Height="17" Text="&lt; &amp;Back">
+          <Publish Event="NewDialog" Value="InstallDirDlg">1</Publish>
+        </Control>
+        <Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+          <Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+        </Control>
+        <Control Id="BannerLine" Type="Line" X="0" Y="0" Width="370" Height="0" />
+        <Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+        <Control Id="Description" Type="Text" X="25" Y="23" Width="280" Height="15" Transparent="yes" NoPrefix="yes" Text="Configure Openctrol Agent settings" />
+        <Control Id="Title" Type="Text" X="15" Y="6" Width="200" Height="15" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Bigger}Configuration" />
+        
+        <!-- Port -->
+        <Control Id="PortLabel" Type="Text" X="20" Y="60" Width="100" Height="15" Text="HTTP Port:" />
+        <Control Id="PortEdit" Type="Edit" X="130" Y="58" Width="100" Height="18" Property="CONFIG_PORT" Text="44325" />
+        <Control Id="PortHelp" Type="Text" X="130" Y="78" Width="200" Height="30" Text="Port number (1024-65535). Default: 44325" />
+        
+        <!-- Use HTTPS -->
+        <Control Id="UseHttpsCheckbox" Type="CheckBox" X="20" Y="110" Width="200" Height="18" Property="CONFIG_USEHTTPS" Text="Use HTTPS (requires certificate)" CheckBoxValue="1" />
+        
+        <!-- Certificate Path -->
+        <Control Id="CertPathLabel" Type="Text" X="20" Y="135" Width="100" Height="15" Text="Certificate Path:" />
+        <Control Id="CertPathEdit" Type="Edit" X="130" Y="133" Width="200" Height="18" Property="CONFIG_CERTPATH">
+          <Condition Action="hide">CONFIG_USEHTTPS = "0"</Condition>
+        </Control>
+        <Control Id="CertPathBrowse" Type="PushButton" X="340" Y="133" Width="20" Height="18" Text="...">
+          <Condition Action="hide">CONFIG_USEHTTPS = "0"</Condition>
+        </Control>
+        
+        <!-- Certificate Password -->
+        <Control Id="CertPasswordLabel" Type="Text" X="20" Y="160" Width="100" Height="15" Text="Certificate Password:" />
+        <Control Id="CertPasswordEdit" Type="Edit" X="130" Y="158" Width="200" Height="18" Property="CONFIG_CERTPASSWORD" Password="yes">
+          <Condition Action="hide">CONFIG_USEHTTPS = "0"</Condition>
+        </Control>
+        
+        <!-- API Key -->
+        <Control Id="ApiKeyLabel" Type="Text" X="20" Y="185" Width="100" Height="15" Text="API Key:" />
+        <Control Id="ApiKeyEdit" Type="Edit" X="130" Y="183" Width="200" Height="18" Property="CONFIG_APIKEY" Password="yes" />
+        <Control Id="ApiKeyGenerate" Type="PushButton" X="340" Y="183" Width="20" Height="18" Text="Gen">
+          <Publish Event="DoAction" Value="GenerateApiKey">1</Publish>
+        </Control>
+        <Control Id="ApiKeyHelp" Type="Text" X="130" Y="203" Width="200" Height="15" Text="Leave empty to auto-generate" />
+      </Dialog>
+    </UI>
+  </Fragment>
+</Wix>
+

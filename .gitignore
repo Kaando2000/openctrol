@@ -61,3 +61,27 @@ Desktop.ini
 _ReSharper*/
 *.[Rr]e[Ss]harper
 *.DotSettings.user
+
+## WiX Toolset build outputs
+*.wixobj
+*.wixpdb
+*.wixlib
+*.msi
+*.msm
+*.msp
+installer/**/bin/
+installer/**/obj/
+HarvestFiles.wxs
+
+## Installer artifacts (keep dist/ folder but ignore contents except final MSI)
+dist/*
+!dist/.gitkeep
+!dist/*.msi
+!dist/*.exe
+
+## NuGet cache files
+**/obj/**/project.assets.json
+**/obj/**/project.nuget.cache
+**/obj/**/*.nuget.dgspec.json
+**/obj/**/*.nuget.g.props
+**/obj/**/*.nuget.g.targets

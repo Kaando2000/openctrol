@@ -35,6 +35,10 @@ openctrol/
 │   └── Openctrol.Agent/          # Main service project
 ├── tests/
 │   └── Openctrol.Agent.Tests/    # Unit tests
+├── installer/
+│   └── Openctrol.Agent.Setup/    # WiX installer project
+├── scripts/
+│   └── build-installer.ps1       # Build script for MSI
 ├── tools/                         # Service installation scripts
 └── docs/                          # Documentation
 ```
@@ -96,5 +100,5 @@ The service reads configuration from:
 
 A default configuration file is created automatically on first run if it doesn't exist.
 
-See `ARCHITECTURE.md` for detailed configuration options.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed configuration options.
 
