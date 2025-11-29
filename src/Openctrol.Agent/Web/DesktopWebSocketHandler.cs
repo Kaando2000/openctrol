@@ -73,8 +73,21 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             // Wait for either task to complete
             await Task.WhenAny(receiveTask, sendTask);
             
-            // Cancel frame sending
+            // Cancel to signal both tasks to stop
             _cancellationTokenSource.Cancel();
+            
+            // Wait for both tasks to complete to ensure clean shutdown
+            // This prevents race conditions where one task might still be accessing
+            // the WebSocket or channel while cleanup is happening
+            try
+            {
+                await Task.WhenAll(receiveTask, sendTask);
+            }
+            catch (Exception ex)
+            {
+                // Log but don't throw - we're shutting down anyway
+                _logger.Error($"Error waiting for tasks to complete in session {_sessionId}", ex);
+            }
         }
         catch (Exception ex)
         {
@@ -82,6 +95,9 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         finally
         {
+            // Ensure cancellation is set (in case exception occurred before cancellation)
+            _cancellationTokenSource.Cancel();
+            
             if (_isSubscribed)
             {
                 _remoteDesktopEngine.UnregisterFrameSubscriber(this);
@@ -267,143 +283,185 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
 
     private void HandlePointerMove(JsonElement root)
     {
-        var dx = root.TryGetProperty("dx", out var dxEl) ? dxEl.GetInt32() : 0;
-        var dy = root.TryGetProperty("dy", out var dyEl) ? dyEl.GetInt32() : 0;
-        var absolute = root.TryGetProperty("absolute", out var absEl) && absEl.GetBoolean();
-
-        PointerEvent evt;
-        if (absolute && root.TryGetProperty("x", out var xEl) && root.TryGetProperty("y", out var yEl))
+        try
         {
-            evt = new PointerEvent
-            {
-                Kind = PointerEventKind.MoveAbsolute,
-                AbsoluteX = xEl.GetInt32(),
-                AbsoluteY = yEl.GetInt32()
-            };
-        }
-        else
-        {
-            evt = new PointerEvent
-            {
-                Kind = PointerEventKind.MoveRelative,
-                Dx = dx,
-                Dy = dy
-            };
-        }
+            var dx = root.TryGetProperty("dx", out var dxEl) ? dxEl.GetInt32() : 0;
+            var dy = root.TryGetProperty("dy", out var dyEl) ? dyEl.GetInt32() : 0;
+            var absolute = root.TryGetProperty("absolute", out var absEl) && absEl.GetBoolean();
 
-        _remoteDesktopEngine.InjectPointer(evt);
+            PointerEvent evt;
+            if (absolute && root.TryGetProperty("x", out var xEl) && root.TryGetProperty("y", out var yEl))
+            {
+                evt = new PointerEvent
+                {
+                    Kind = PointerEventKind.MoveAbsolute,
+                    AbsoluteX = xEl.GetInt32(),
+                    AbsoluteY = yEl.GetInt32()
+                };
+            }
+            else
+            {
+                evt = new PointerEvent
+                {
+                    Kind = PointerEventKind.MoveRelative,
+                    Dx = dx,
+                    Dy = dy
+                };
+            }
+
+            _remoteDesktopEngine.InjectPointer(evt);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error handling pointer move", ex);
+        }
     }
 
     private void HandlePointerButton(JsonElement root)
     {
-        if (!root.TryGetProperty("button", out var buttonEl) || !root.TryGetProperty("action", out var actionEl))
+        try
         {
-            return;
-        }
-
-        var buttonStr = buttonEl.GetString();
-        var actionStr = actionEl.GetString();
-
-        MouseButton? button = buttonStr?.ToLower() switch
-        {
-            "left" => MouseButton.Left,
-            "right" => MouseButton.Right,
-            "middle" => MouseButton.Middle,
-            _ => null
-        };
-
-        MouseButtonAction? action = actionStr?.ToLower() switch
-        {
-            "down" => MouseButtonAction.Down,
-            "up" => MouseButtonAction.Up,
-            _ => null
-        };
-
-        if (button.HasValue && action.HasValue)
-        {
-            var evt = new PointerEvent
+            if (!root.TryGetProperty("button", out var buttonEl) || !root.TryGetProperty("action", out var actionEl))
             {
-                Kind = PointerEventKind.Button,
-                Button = button.Value,
-                ButtonAction = action.Value
+                return;
+            }
+
+            var buttonStr = buttonEl.GetString();
+            var actionStr = actionEl.GetString();
+
+            MouseButton? button = buttonStr?.ToLower() switch
+            {
+                "left" => MouseButton.Left,
+                "right" => MouseButton.Right,
+                "middle" => MouseButton.Middle,
+                _ => null
             };
 
-            _remoteDesktopEngine.InjectPointer(evt);
+            MouseButtonAction? action = actionStr?.ToLower() switch
+            {
+                "down" => MouseButtonAction.Down,
+                "up" => MouseButtonAction.Up,
+                _ => null
+            };
+
+            if (button.HasValue && action.HasValue)
+            {
+                var evt = new PointerEvent
+                {
+                    Kind = PointerEventKind.Button,
+                    Button = button.Value,
+                    ButtonAction = action.Value
+                };
+
+                _remoteDesktopEngine.InjectPointer(evt);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error handling pointer button", ex);
         }
     }
 
     private void HandlePointerWheel(JsonElement root)
     {
-        var deltaX = root.TryGetProperty("delta_x", out var dxEl) ? dxEl.GetInt32() : 0;
-        var deltaY = root.TryGetProperty("delta_y", out var dyEl) ? dyEl.GetInt32() : 0;
-
-        if (deltaX != 0 || deltaY != 0)
+        try
         {
-            var evt = new PointerEvent
-            {
-                Kind = PointerEventKind.Wheel,
-                WheelDeltaX = deltaX,
-                WheelDeltaY = deltaY
-            };
+            var deltaX = root.TryGetProperty("delta_x", out var dxEl) ? dxEl.GetInt32() : 0;
+            var deltaY = root.TryGetProperty("delta_y", out var dyEl) ? dyEl.GetInt32() : 0;
 
-            _remoteDesktopEngine.InjectPointer(evt);
+            if (deltaX != 0 || deltaY != 0)
+            {
+                var evt = new PointerEvent
+                {
+                    Kind = PointerEventKind.Wheel,
+                    WheelDeltaX = deltaX,
+                    WheelDeltaY = deltaY
+                };
+
+                _remoteDesktopEngine.InjectPointer(evt);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error handling pointer wheel", ex);
         }
     }
 
     private void HandleKey(JsonElement root)
     {
-        if (!root.TryGetProperty("key_code", out var keyCodeEl))
+        try
         {
-            return;
+            if (!root.TryGetProperty("key_code", out var keyCodeEl))
+            {
+                return;
+            }
+
+            var keyCode = keyCodeEl.GetInt32();
+            var action = root.TryGetProperty("action", out var actionEl) ? actionEl.GetString() : "down";
+            var modifiers = ParseModifiers(root);
+
+            var evt = new KeyboardEvent
+            {
+                Kind = action == "up" ? KeyboardEventKind.KeyUp : KeyboardEventKind.KeyDown,
+                KeyCode = keyCode,
+                Modifiers = modifiers
+            };
+
+            _remoteDesktopEngine.InjectKey(evt);
         }
-
-        var keyCode = keyCodeEl.GetInt32();
-        var action = root.TryGetProperty("action", out var actionEl) ? actionEl.GetString() : "down";
-        var modifiers = ParseModifiers(root);
-
-        var evt = new KeyboardEvent
+        catch (Exception ex)
         {
-            Kind = action == "up" ? KeyboardEventKind.KeyUp : KeyboardEventKind.KeyDown,
-            KeyCode = keyCode,
-            Modifiers = modifiers
-        };
-
-        _remoteDesktopEngine.InjectKey(evt);
+            _logger.Error("Error handling key event", ex);
+        }
     }
 
     private void HandleText(JsonElement root)
     {
-        if (!root.TryGetProperty("text", out var textEl))
+        try
         {
-            return;
+            if (!root.TryGetProperty("text", out var textEl))
+            {
+                return;
+            }
+
+            var text = textEl.GetString();
+            if (string.IsNullOrEmpty(text))
+            {
+                return;
+            }
+
+            var modifiers = ParseModifiers(root);
+            var evt = new KeyboardEvent
+            {
+                Kind = KeyboardEventKind.Text,
+                Text = text,
+                Modifiers = modifiers
+            };
+
+            _remoteDesktopEngine.InjectKey(evt);
         }
-
-        var text = textEl.GetString();
-        if (string.IsNullOrEmpty(text))
+        catch (Exception ex)
         {
-            return;
+            _logger.Error("Error handling text event", ex);
         }
-
-        var modifiers = ParseModifiers(root);
-        var evt = new KeyboardEvent
-        {
-            Kind = KeyboardEventKind.Text,
-            Text = text,
-            Modifiers = modifiers
-        };
-
-        _remoteDesktopEngine.InjectKey(evt);
     }
 
     private void HandleMonitorSelect(JsonElement root)
     {
-        if (root.TryGetProperty("monitor_id", out var monitorIdEl))
+        try
         {
-            var monitorId = monitorIdEl.GetString();
-            if (!string.IsNullOrEmpty(monitorId))
+            if (root.TryGetProperty("monitor_id", out var monitorIdEl))
             {
-                _remoteDesktopEngine.SelectMonitor(monitorId);
+                var monitorId = monitorIdEl.GetString();
+                if (!string.IsNullOrEmpty(monitorId))
+                {
+                    _remoteDesktopEngine.SelectMonitor(monitorId);
+                }
             }
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error handling monitor select", ex);
         }
     }
 

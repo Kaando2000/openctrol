@@ -10,6 +10,7 @@ using System.Security.Cryptography.X509Certificates;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Openctrol.Agent.Audio;
 using Openctrol.Agent.Config;
+using Openctrol.Agent.Hosting;
 using Openctrol.Agent.Power;
 using Openctrol.Agent.RemoteDesktop;
 using Openctrol.Agent.Security;
@@ -27,6 +28,7 @@ public sealed class ControlApiServer : IControlApiServer
     private readonly IRemoteDesktopEngine? _remoteDesktopEngine;
     private readonly IPowerManager? _powerManager;
     private readonly IAudioManager? _audioManager;
+    private readonly IUptimeService? _uptimeService;
     private WebApplication? _app;
     private Task? _runTask;
     private X509Certificate2? _certificate; // Store to prevent disposal before Kestrel uses it
@@ -38,7 +40,8 @@ public sealed class ControlApiServer : IControlApiServer
         ISessionBroker? sessionBroker = null,
         IRemoteDesktopEngine? remoteDesktopEngine = null,
         IPowerManager? powerManager = null,
-        IAudioManager? audioManager = null)
+        IAudioManager? audioManager = null,
+        IUptimeService? uptimeService = null)
     {
         _configManager = configManager;
         _logger = logger;
@@ -47,6 +50,7 @@ public sealed class ControlApiServer : IControlApiServer
         _remoteDesktopEngine = remoteDesktopEngine;
         _powerManager = powerManager;
         _audioManager = audioManager;
+        _uptimeService = uptimeService;
     }
 
     public void Start()
@@ -110,12 +114,11 @@ public sealed class ControlApiServer : IControlApiServer
                     State = "unknown"
                 };
 
-            // Uptime is tracked in AgentHost, but for now we'll use a simple approach
-            // In a full implementation, you'd inject an uptime service
+            var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
             var health = new HealthDto
             {
                 AgentId = config.AgentId,
-                UptimeSeconds = 0, // TODO: Inject uptime service
+                UptimeSeconds = uptimeSeconds,
                 RemoteDesktop = remoteDesktop,
                 ActiveSessions = activeSessions
             };

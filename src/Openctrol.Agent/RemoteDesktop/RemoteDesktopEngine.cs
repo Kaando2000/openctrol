@@ -3,6 +3,7 @@ using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using Openctrol.Agent.Config;
 using Openctrol.Agent.Input;
+using Openctrol.Agent.SystemState;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 
 namespace Openctrol.Agent.RemoteDesktop;
@@ -12,8 +13,10 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
     private readonly InputDispatcher _inputDispatcher;
+    private readonly ISystemStateMonitor? _systemStateMonitor;
     private readonly List<IFrameSubscriber> _subscribers = new();
     private readonly object _subscribersLock = new();
+    private readonly object _statusLock = new(); // Lock for status fields accessed from multiple threads
     private Thread? _captureThread;
     private bool _isRunning;
     private DateTimeOffset _lastFrameAt;
@@ -23,11 +26,16 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
     private int _captureFailureCount = 0;
     private const int MaxCaptureFailures = 5;
 
-    public RemoteDesktopEngine(IConfigManager configManager, ILogger logger, InputDispatcher inputDispatcher)
+    public RemoteDesktopEngine(
+        IConfigManager configManager,
+        ILogger logger,
+        InputDispatcher inputDispatcher,
+        ISystemStateMonitor? systemStateMonitor = null)
     {
         _configManager = configManager;
         _logger = logger;
         _inputDispatcher = inputDispatcher;
+        _systemStateMonitor = systemStateMonitor;
     }
 
     public void Start()
@@ -39,6 +47,15 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
 
         _isRunning = true;
         _logger.Info("RemoteDesktopEngine starting...");
+
+        // Hook into system state monitor to react to state changes
+        if (_systemStateMonitor != null)
+        {
+            _systemStateMonitor.StateChanged += OnSystemStateChanged;
+            // Update current state from initial system state
+            var initialState = _systemStateMonitor.GetCurrent();
+            UpdateStateFromSystemState(initialState);
+        }
 
         _captureThread = new Thread(CaptureLoop)
         {
@@ -60,6 +77,12 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         _isRunning = false;
         _logger.Info("RemoteDesktopEngine stopping...");
 
+        // Unhook from system state monitor
+        if (_systemStateMonitor != null)
+        {
+            _systemStateMonitor.StateChanged -= OnSystemStateChanged;
+        }
+
         _captureThread?.Join(TimeSpan.FromSeconds(5));
         _captureThread = null;
 
@@ -68,12 +91,16 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
 
     public RemoteDesktopStatus GetStatus()
     {
-        return new RemoteDesktopStatus
+        // Synchronize access to status fields that are written from multiple threads
+        lock (_statusLock)
         {
-            IsRunning = _isRunning,
-            LastFrameAt = _lastFrameAt,
-            State = _currentState
-        };
+            return new RemoteDesktopStatus
+            {
+                IsRunning = _isRunning,
+                LastFrameAt = _lastFrameAt,
+                State = _currentState
+            };
+        }
     }
 
     public IReadOnlyList<MonitorInfo> GetMonitors()
@@ -115,6 +142,20 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
 
     public void SelectMonitor(string monitorId)
     {
+        if (string.IsNullOrEmpty(monitorId))
+        {
+            _logger.Warn("SelectMonitor called with null or empty monitor ID");
+            return;
+        }
+
+        // Validate monitor exists
+        var monitors = GetMonitors();
+        if (!monitors.Any(m => m.Id == monitorId))
+        {
+            _logger.Warn($"SelectMonitor called with invalid monitor ID: {monitorId}");
+            return;
+        }
+
         _currentMonitorId = monitorId;
         _logger.Info($"Selected monitor: {monitorId}");
     }
@@ -140,12 +181,38 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
 
     public void InjectPointer(PointerEvent evt)
     {
-        _inputDispatcher.DispatchPointer(evt);
+        if (evt == null)
+        {
+            _logger.Warn("InjectPointer called with null event");
+            return;
+        }
+
+        try
+        {
+            _inputDispatcher.DispatchPointer(evt);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error injecting pointer event", ex);
+        }
     }
 
     public void InjectKey(KeyboardEvent evt)
     {
-        _inputDispatcher.DispatchKeyboard(evt);
+        if (evt == null)
+        {
+            _logger.Warn("InjectKey called with null event");
+            return;
+        }
+
+        try
+        {
+            _inputDispatcher.DispatchKeyboard(evt);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error injecting keyboard event", ex);
+        }
     }
 
     private void CaptureLoop()
@@ -162,7 +229,11 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                 var frame = GenerateSyntheticFrame();
                 if (frame != null)
                 {
-                    _lastFrameAt = DateTimeOffset.UtcNow;
+                    // Update last frame timestamp with synchronization
+                    lock (_statusLock)
+                    {
+                        _lastFrameAt = DateTimeOffset.UtcNow;
+                    }
                     _sequenceNumber++;
 
                     NotifySubscribers(frame);
@@ -209,14 +280,30 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
     {
         try
         {
-            var screenWidth = GetSystemMetrics(SM_CXSCREEN);
-            var screenHeight = GetSystemMetrics(SM_CYSCREEN);
+            // Get the selected monitor's bounds
+            var monitors = GetMonitors();
+            var selectedMonitor = monitors.FirstOrDefault(m => m.Id == _currentMonitorId);
+            
+            if (selectedMonitor == null)
+            {
+                // Fallback to primary monitor if selected monitor not found
+                selectedMonitor = monitors.FirstOrDefault(m => m.IsPrimary) ?? monitors.FirstOrDefault();
+                if (selectedMonitor == null)
+                {
+                    _logger.Warn("No monitors available for capture");
+                    return null;
+                }
+            }
+
+            var screenWidth = selectedMonitor.Width;
+            var screenHeight = selectedMonitor.Height;
 
             if (screenWidth <= 0 || screenHeight <= 0)
             {
                 return null;
             }
 
+            // Get the device context for the entire virtual screen
             var hdcScreen = GetDC(IntPtr.Zero);
             if (hdcScreen == IntPtr.Zero)
             {
@@ -242,7 +329,27 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                     try
                     {
                         var oldBitmap = SelectObject(hdcMem, hBitmap);
-                        BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, 0, 0, SRCCOPY);
+                        
+                        // Calculate source coordinates for the selected monitor
+                        // For multi-monitor setups, we need to capture from the correct position
+                        // For now, capture from (0,0) which works for primary monitor
+                        // TODO: Support capturing from non-primary monitors by using monitor bounds
+                        var srcX = 0;
+                        var srcY = 0;
+                        
+                        // If not primary monitor, try to get its position
+                        if (!selectedMonitor.IsPrimary)
+                        {
+                            var screens = System.Windows.Forms.Screen.AllScreens;
+                            var screen = screens.FirstOrDefault(s => s.DeviceName == selectedMonitor.Name);
+                            if (screen != null)
+                            {
+                                srcX = screen.Bounds.X;
+                                srcY = screen.Bounds.Y;
+                            }
+                        }
+                        
+                        BitBlt(hdcMem, 0, 0, screenWidth, screenHeight, hdcScreen, srcX, srcY, SRCCOPY);
                         SelectObject(hdcMem, oldBitmap);
 
                         using var bitmap = Image.FromHbitmap(hBitmap);
@@ -368,6 +475,32 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             catch (Exception ex)
             {
                 _logger.Error("Error notifying frame subscriber", ex);
+            }
+        }
+    }
+
+    private void OnSystemStateChanged(object? sender, SystemStateSnapshot snapshot)
+    {
+        UpdateStateFromSystemState(snapshot);
+    }
+
+    private void UpdateStateFromSystemState(SystemStateSnapshot snapshot)
+    {
+        var newState = snapshot.DesktopState switch
+        {
+            DesktopState.LoginScreen => "login_screen",
+            DesktopState.Desktop => "desktop",
+            DesktopState.Locked => "locked",
+            _ => "unknown"
+        };
+
+        // Update state with synchronization to prevent data races
+        lock (_statusLock)
+        {
+            if (_currentState != newState)
+            {
+                _currentState = newState;
+                _logger.Info($"Remote desktop state updated to: {newState} (Session: {snapshot.ActiveSessionId})");
             }
         }
     }

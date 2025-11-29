@@ -42,7 +42,10 @@ public static class Program
                 
                 services.AddSingleton<IControlApiServer, ControlApiServer>();
 
-                services.AddHostedService<AgentHost>();
+                // Register AgentHost as both hosted service and uptime service
+                services.AddSingleton<AgentHost>();
+                services.AddSingleton<IUptimeService>(sp => sp.GetRequiredService<AgentHost>());
+                services.AddHostedService<AgentHost>(sp => sp.GetRequiredService<AgentHost>());
             })
             .Build()
             .Run();

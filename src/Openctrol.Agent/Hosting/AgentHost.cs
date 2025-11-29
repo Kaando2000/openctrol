@@ -7,7 +7,7 @@ using Openctrol.Agent.RemoteDesktop;
 
 namespace Openctrol.Agent.Hosting;
 
-public sealed class AgentHost : BackgroundService
+public sealed class AgentHost : BackgroundService, IUptimeService
 {
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
@@ -16,7 +16,8 @@ public sealed class AgentHost : BackgroundService
     private readonly IRemoteDesktopEngine? _remoteDesktopEngine;
     private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
 
-    public long UptimeSeconds => (long)(DateTimeOffset.UtcNow - _startTime).TotalSeconds;
+    public long GetUptimeSeconds() => (long)(DateTimeOffset.UtcNow - _startTime).TotalSeconds;
+    public DateTimeOffset GetStartTime() => _startTime;
 
     public AgentHost(
         IConfigManager configManager,
