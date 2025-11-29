@@ -85,11 +85,91 @@ internal sealed class CaptureContext : IDisposable
 
         try
         {
-            // Capture screen to bitmap
-            BitBlt(_hdcMem, 0, 0, width, height, _hdcScreen, srcX, srcY, SRCCOPY);
+            // Switch to the active console desktop before capture to handle login/locked screens
+            IntPtr hOriginalDesktop = IntPtr.Zero;
+            IntPtr hInputDesktop = IntPtr.Zero;
+            bool desktopSwitched = false;
+
+            IntPtr hdcSource = _hdcScreen; // Use class field as default
             
-            // Convert to managed Bitmap
-            return Image.FromHbitmap(_hBitmap);
+            try
+            {
+                // Get current thread desktop
+                hOriginalDesktop = GetThreadDesktop(GetCurrentThreadId());
+                
+                // Try to open the input desktop (console/winlogon)
+                hInputDesktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS | DESKTOP_SWITCHDESKTOP);
+                if (hInputDesktop != IntPtr.Zero)
+                {
+                    // Switch thread to input desktop
+                    if (SetThreadDesktop(hInputDesktop))
+                    {
+                        desktopSwitched = true;
+                        // Get a new DC from the switched desktop for capture
+                        hdcSource = GetDC(IntPtr.Zero);
+                        if (hdcSource == IntPtr.Zero)
+                        {
+                            // Failed to get DC after switch, restore and continue with original
+                            SetThreadDesktop(hOriginalDesktop);
+                            desktopSwitched = false;
+                            CloseDesktopHandle(hInputDesktop);
+                            hInputDesktop = IntPtr.Zero;
+                            hdcSource = _hdcScreen; // Fall back to original DC
+                        }
+                    }
+                    else
+                    {
+                        // Failed to switch, close handle and continue with original desktop
+                        CloseDesktopHandle(hInputDesktop);
+                        hInputDesktop = IntPtr.Zero;
+                    }
+                }
+            }
+            catch
+            {
+                // If desktop switching fails, continue with current desktop
+                if (hInputDesktop != IntPtr.Zero)
+                {
+                    CloseDesktopHandle(hInputDesktop);
+                    hInputDesktop = IntPtr.Zero;
+                }
+            }
+
+            try
+            {
+                // Capture screen to bitmap using the source DC (from switched desktop if successful)
+                BitBlt(_hdcMem, 0, 0, width, height, hdcSource, srcX, srcY, SRCCOPY);
+                
+                // Convert to managed Bitmap
+                return Image.FromHbitmap(_hBitmap);
+            }
+            finally
+            {
+                // Release the DC we acquired for the switched desktop (if different from class field)
+                if (desktopSwitched && hdcSource != IntPtr.Zero && hdcSource != _hdcScreen)
+                {
+                    ReleaseDC(IntPtr.Zero, hdcSource);
+                }
+                
+                // Restore original desktop if we switched
+                if (desktopSwitched && hOriginalDesktop != IntPtr.Zero)
+                {
+                    try
+                    {
+                        SetThreadDesktop(hOriginalDesktop);
+                    }
+                    catch
+                    {
+                        // Ignore errors restoring desktop
+                    }
+                }
+                
+                // Clean up input desktop handle
+                if (hInputDesktop != IntPtr.Zero)
+                {
+                    CloseDesktopHandle(hInputDesktop);
+                }
+            }
         }
         catch
         {
@@ -183,6 +263,28 @@ internal sealed class CaptureContext : IDisposable
     [DllImport("gdi32.dll")]
     private static extern bool BitBlt(IntPtr hObject, int nXDest, int nYDest, int nWidth, int nHeight, IntPtr hObjectSource, int nXSrc, int nYSrc, int dwRop);
 
+    [DllImport("user32.dll")]
+    private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetThreadDesktop(uint dwThreadId);
+
+    [DllImport("kernel32.dll")]
+    private static extern uint GetCurrentThreadId();
+
+    [DllImport("user32.dll")]
+    private static extern bool SetThreadDesktop(IntPtr hDesktop);
+
+    [DllImport("user32.dll")]
+    private static extern bool CloseDesktop(IntPtr hDesktop);
+
+    private static void CloseDesktopHandle(IntPtr hDesktop)
+    {
+        CloseDesktop(hDesktop);
+    }
+
     private const int SRCCOPY = 0x00CC0020;
+    private const uint DESKTOP_READOBJECTS = 0x0001;
+    private const uint DESKTOP_SWITCHDESKTOP = 0x0100;
 }
 

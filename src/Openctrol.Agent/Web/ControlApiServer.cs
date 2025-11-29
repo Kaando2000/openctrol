@@ -14,6 +14,7 @@ using Openctrol.Agent.Hosting;
 using Openctrol.Agent.Power;
 using Openctrol.Agent.RemoteDesktop;
 using Openctrol.Agent.Security;
+using Openctrol.Agent.SystemState;
 using Openctrol.Agent.Web.Dtos;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 
@@ -29,6 +30,7 @@ public sealed class ControlApiServer : IControlApiServer
     private readonly IPowerManager? _powerManager;
     private readonly IAudioManager? _audioManager;
     private readonly IUptimeService? _uptimeService;
+    private readonly ISystemStateMonitor? _systemStateMonitor;
     private WebApplication? _app;
     private Task? _runTask;
     private X509Certificate2? _certificate; // Store to prevent disposal before Kestrel uses it
@@ -41,7 +43,8 @@ public sealed class ControlApiServer : IControlApiServer
         IRemoteDesktopEngine? remoteDesktopEngine = null,
         IPowerManager? powerManager = null,
         IAudioManager? audioManager = null,
-        IUptimeService? uptimeService = null)
+        IUptimeService? uptimeService = null,
+        ISystemStateMonitor? systemStateMonitor = null)
     {
         _configManager = configManager;
         _logger = logger;
@@ -51,6 +54,7 @@ public sealed class ControlApiServer : IControlApiServer
         _powerManager = powerManager;
         _audioManager = audioManager;
         _uptimeService = uptimeService;
+        _systemStateMonitor = systemStateMonitor;
     }
 
     public void Start()
@@ -100,34 +104,118 @@ public sealed class ControlApiServer : IControlApiServer
         // Health endpoint (no auth required - public health check)
         _app.MapGet("/api/v1/health", () =>
         {
-            var config = _configManager.GetConfig();
-            var activeSessions = _sessionBroker?.GetActiveSessions().Count ?? 0;
-            var remoteDesktopStatus = _remoteDesktopEngine?.GetStatus();
+            try
+            {
+                var config = _configManager.GetConfig();
+                var activeSessions = 0;
+                RemoteDesktopStatus? remoteDesktopStatus = null;
 
-            var remoteDesktop = remoteDesktopStatus != null
-                ? new RemoteDesktopHealthDto
+                try
                 {
-                    IsRunning = remoteDesktopStatus.IsRunning,
-                    LastFrameAt = remoteDesktopStatus.LastFrameAt,
-                    State = remoteDesktopStatus.State
+                    activeSessions = _sessionBroker?.GetActiveSessions().Count ?? 0;
                 }
-                : new RemoteDesktopHealthDto
+                catch (Exception ex)
                 {
-                    IsRunning = false,
-                    LastFrameAt = DateTimeOffset.MinValue,
-                    State = "unknown"
+                    _logger.Error("[Health] Error getting active sessions", ex);
+                }
+
+                try
+                {
+                    remoteDesktopStatus = _remoteDesktopEngine?.GetStatus();
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("[Health] Error getting remote desktop status", ex);
+                }
+
+                // Map state to desktop_state (login_screen, desktop, locked, unknown)
+                // Get desktop state from system state monitor if available
+                string desktopState = "unknown";
+                try
+                {
+                    var systemState = _systemStateMonitor?.GetCurrent();
+                    if (systemState != null)
+                    {
+                        desktopState = systemState.DesktopState switch
+                        {
+                            DesktopState.LoginScreen => "login_screen",
+                            DesktopState.Desktop => "desktop",
+                            DesktopState.Locked => "locked",
+                            _ => "unknown"
+                        };
+                    }
+                    else if (remoteDesktopStatus != null)
+                    {
+                        // Fallback: Extract desktop state from the state string
+                        var stateLower = remoteDesktopStatus.State.ToLower();
+                        desktopState = stateLower.Contains("login") ? "login_screen" :
+                                     stateLower.Contains("lock") ? "locked" :
+                                     stateLower.Contains("desktop") ? "desktop" : "unknown";
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"[Health] Error getting desktop state: {ex.Message}");
+                    // Fallback to parsing state string
+                    if (remoteDesktopStatus != null)
+                    {
+                        var stateLower = remoteDesktopStatus.State.ToLower();
+                        desktopState = stateLower.Contains("login") ? "login_screen" :
+                                     stateLower.Contains("lock") ? "locked" :
+                                     stateLower.Contains("desktop") ? "desktop" : "unknown";
+                    }
+                }
+
+                var remoteDesktop = remoteDesktopStatus != null
+                    ? new RemoteDesktopHealthDto
+                    {
+                        IsRunning = remoteDesktopStatus.IsRunning,
+                        LastFrameAt = remoteDesktopStatus.LastFrameAt,
+                        State = remoteDesktopStatus.State,
+                        DesktopState = desktopState,
+                        Degraded = remoteDesktopStatus.IsDegraded
+                    }
+                    : new RemoteDesktopHealthDto
+                    {
+                        IsRunning = false,
+                        LastFrameAt = DateTimeOffset.MinValue,
+                        State = "unknown",
+                        DesktopState = "unknown",
+                        Degraded = false
+                    };
+
+                var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
+                var health = new HealthDto
+                {
+                    AgentId = config.AgentId,
+                    Version = "1.0.0",
+                    UptimeSeconds = uptimeSeconds,
+                    RemoteDesktop = remoteDesktop,
+                    ActiveSessions = activeSessions
                 };
 
-            var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
-            var health = new HealthDto
+                return Results.Json(health);
+            }
+            catch (Exception ex)
             {
-                AgentId = config.AgentId,
-                UptimeSeconds = uptimeSeconds,
-                RemoteDesktop = remoteDesktop,
-                ActiveSessions = activeSessions
-            };
-
-            return Results.Json(health);
+                _logger.Error("[Health] Error in health endpoint", ex);
+                // Return minimal health response on error
+                return Results.Json(new HealthDto
+                {
+                    AgentId = "",
+                    Version = "1.0.0",
+                    UptimeSeconds = 0,
+                    RemoteDesktop = new RemoteDesktopHealthDto
+                    {
+                        IsRunning = false,
+                        LastFrameAt = DateTimeOffset.MinValue,
+                        State = "unknown",
+                        DesktopState = "unknown",
+                        Degraded = false
+                    },
+                    ActiveSessions = 0
+                });
+            }
         });
 
         // Create desktop session
@@ -447,12 +535,16 @@ public sealed class ControlApiServer : IControlApiServer
             if (!context.WebSockets.IsWebSocketRequest)
             {
                 context.Response.StatusCode = 400;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "invalid_request", Details = "WebSocket upgrade required" });
                 return;
             }
 
             if (_securityManager == null || _sessionBroker == null || _remoteDesktopEngine == null)
             {
                 context.Response.StatusCode = 503;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "service_unavailable", Details = "Required services not available" });
                 return;
             }
 
@@ -464,6 +556,8 @@ public sealed class ControlApiServer : IControlApiServer
             if (string.IsNullOrEmpty(sessionId) || string.IsNullOrEmpty(token))
             {
                 context.Response.StatusCode = 400;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "invalid_request", Details = "Session ID and token are required" });
                 return;
             }
 
@@ -471,6 +565,8 @@ public sealed class ControlApiServer : IControlApiServer
             if (!_securityManager.TryValidateDesktopSessionToken(token, out var validatedToken))
             {
                 context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "unauthorized", Details = "Invalid or expired session token" });
                 return;
             }
 
@@ -478,6 +574,8 @@ public sealed class ControlApiServer : IControlApiServer
             if (!_sessionBroker.TryGetSession(sessionId, out var session) || session.HaId != validatedToken.HaId)
             {
                 context.Response.StatusCode = 404;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "not_found", Details = "Session not found or does not match token" });
                 return;
             }
 

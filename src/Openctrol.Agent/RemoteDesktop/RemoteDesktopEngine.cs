@@ -126,7 +126,8 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             {
                 IsRunning = _isRunning,
                 LastFrameAt = _lastFrameAt,
-                State = state
+                State = state,
+                IsDegraded = _isDegraded
             };
         }
     }
@@ -185,7 +186,9 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         }
 
         _currentMonitorId = monitorId;
-        _logger.Info($"Selected monitor: {monitorId}");
+        // Update input dispatcher with the selected monitor for accurate absolute positioning
+        _inputDispatcher.SetCurrentMonitor(monitorId);
+        _logger.Info($"[RemoteDesktop] Selected monitor: {monitorId}");
     }
 
     public void RegisterFrameSubscriber(IFrameSubscriber subscriber)

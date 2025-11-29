@@ -7,10 +7,19 @@ public sealed class InputDispatcher
 {
     private readonly ILogger _logger;
     private readonly object _lock = new();
+    private string _currentMonitorId = "DISPLAY1"; // Track current monitor for absolute positioning
 
     public InputDispatcher(ILogger logger)
     {
         _logger = logger;
+    }
+
+    public void SetCurrentMonitor(string monitorId)
+    {
+        lock (_lock)
+        {
+            _currentMonitorId = monitorId;
+        }
     }
 
     public void DispatchPointer(PointerEvent evt)
@@ -157,7 +166,7 @@ public sealed class InputDispatcher
     {
         // Use SendInput with MOUSEEVENTF.ABSOLUTE for proper multi-monitor and DPI support
         // Coordinates from client are relative to the monitor being streamed
-        // We'll use the primary monitor as reference and convert to virtual desktop coordinates
+        // Use the currently selected monitor's bounds to convert to virtual desktop coordinates
         
         try
         {
@@ -169,17 +178,39 @@ public sealed class InputDispatcher
                 return;
             }
 
-            // Get primary monitor bounds
-            var primaryScreen = System.Windows.Forms.Screen.PrimaryScreen;
-            if (primaryScreen == null)
+            // Get the currently selected monitor
+            System.Windows.Forms.Screen selectedScreen;
+            lock (_lock)
             {
-                primaryScreen = virtualDesktop[0];
+                // Find the screen matching the current monitor ID
+                // Monitor IDs are typically like "DISPLAY1", "DISPLAY2", etc.
+                // Extract display number from ID (e.g., "DISPLAY1" -> 1, "DISPLAY2" -> 2)
+                var displayNumber = 1;
+                if (_currentMonitorId.StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase))
+                {
+                    var numberPart = _currentMonitorId.Substring(7); // Skip "DISPLAY"
+                    if (int.TryParse(numberPart, out var num))
+                    {
+                        displayNumber = num;
+                    }
+                }
+                
+                // Match by index (DISPLAY1 = index 0, DISPLAY2 = index 1, etc.)
+                if (displayNumber >= 1 && displayNumber <= virtualDesktop.Length)
+                {
+                    selectedScreen = virtualDesktop[displayNumber - 1];
+                }
+                else
+                {
+                    // Fallback to primary or first screen
+                    selectedScreen = System.Windows.Forms.Screen.PrimaryScreen ?? virtualDesktop[0];
+                }
             }
 
-            // Client coordinates are relative to the streamed monitor (assumed to be primary for now)
-            // Convert to virtual desktop coordinates
-            var virtualX = primaryScreen.Bounds.X + x;
-            var virtualY = primaryScreen.Bounds.Y + y;
+            // Client coordinates are relative to the streamed monitor
+            // Convert to virtual desktop coordinates using the selected monitor's bounds
+            var virtualX = selectedScreen.Bounds.X + x;
+            var virtualY = selectedScreen.Bounds.Y + y;
 
             // Get virtual desktop dimensions
             var minX = virtualDesktop.Min(s => s.Bounds.Left);

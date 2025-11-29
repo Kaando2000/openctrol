@@ -8,6 +8,8 @@ public sealed class AudioManager : IAudioManager
 {
     private readonly ILogger _logger;
     private readonly MMDeviceEnumerator _deviceEnumerator;
+    private readonly Dictionary<string, string> _sessionRoutingCache = new(); // Cache session -> device routing
+    private readonly object _routingLock = new();
 
     public AudioManager(ILogger logger)
     {
@@ -59,13 +61,16 @@ public sealed class AudioManager : IAudioManager
                         try
                         {
                             // Get the device ID this session is routed to
-                            // Note: Windows audio APIs don't provide a reliable way to query which device
-                            // a session is currently routed to. We can set routing via SetSessionOutputDevice(),
-                            // but GetState() cannot accurately reflect the actual routing.
-                            // We return an empty string to indicate the routing is unknown rather than
-                            // misleadingly reporting the default device. Clients should not rely on this
-                            // field to determine actual routing - it's informational only.
-                            var sessionDeviceId = ""; // Unknown - Windows API limitation
+                            // Check our routing cache first (populated when SetSessionOutputDevice is called)
+                            var sessionId = session.GetSessionIdentifier ?? i.ToString();
+                            string sessionDeviceId;
+                            lock (_routingLock)
+                            {
+                                if (!_sessionRoutingCache.TryGetValue(sessionId, out sessionDeviceId!))
+                                {
+                                    sessionDeviceId = ""; // Empty if not in cache (unknown routing)
+                                }
+                            }
                             
                             sessions.Add(new AudioSessionInfo
                             {
@@ -231,6 +236,11 @@ public sealed class AudioManager : IAudioManager
                             if (!string.IsNullOrEmpty(sessionInstanceId))
                             {
                                 policyConfig.SetDefaultEndpointForId(sessionInstanceId, deviceId, Role.Multimedia);
+                                // Cache the routing state
+                                lock (_routingLock)
+                                {
+                                    _sessionRoutingCache[sessionId] = deviceId;
+                                }
                                 _logger.Info($"Session {sessionId} ({session.DisplayName}) routed to device: {device.FriendlyName} ({deviceId})");
                                 return;
                             }

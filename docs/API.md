@@ -39,11 +39,14 @@ Returns the health status of the agent. **No authentication required** (public h
 ```json
 {
   "agent_id": "guid-string",
+  "version": "1.0.0",
   "uptime_seconds": 12345,
   "remote_desktop": {
     "is_running": true,
     "last_frame_at": "2024-01-01T12:00:00Z",
-    "state": "desktop"  // Can be: "login_screen", "desktop", "locked", "unknown", or with "_degraded" suffix (e.g., "desktop_degraded")
+    "state": "desktop",  // Can be: "login_screen", "desktop", "locked", "unknown", or with "_degraded" suffix (e.g., "desktop_degraded")
+    "desktop_state": "desktop",  // Normalized state: "login_screen", "desktop", "locked", or "unknown"
+    "degraded": false  // true when capture is repeatedly failing
   },
   "active_sessions": 1
 }
