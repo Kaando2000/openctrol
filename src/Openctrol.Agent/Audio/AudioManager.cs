@@ -8,8 +8,6 @@ public sealed class AudioManager : IAudioManager
 {
     private readonly ILogger _logger;
     private readonly MMDeviceEnumerator _deviceEnumerator;
-    private readonly Dictionary<string, string> _sessionRoutingCache = new(); // Cache session -> device routing
-    private readonly object _routingLock = new();
 
     public AudioManager(ILogger logger)
     {
@@ -47,12 +45,16 @@ public sealed class AudioManager : IAudioManager
                 }
             }
 
+            // Enumerate sessions from ALL render devices (not just default)
+            // This gives us the actual device each session is routed to
             var sessions = new List<AudioSessionInfo>();
-            if (defaultDevice != null)
+            var sessionIdsSeen = new HashSet<string>(); // Track to avoid duplicates
+            
+            foreach (var device in deviceCollection)
             {
                 try
                 {
-                    var sessionManager = defaultDevice.AudioSessionManager;
+                    var sessionManager = device.AudioSessionManager;
                     var sessionEnumerator = sessionManager.Sessions;
 
                     for (int i = 0; i < sessionEnumerator.Count; i++)
@@ -60,36 +62,35 @@ public sealed class AudioManager : IAudioManager
                         var session = sessionEnumerator[i];
                         try
                         {
-                            // Get the device ID this session is routed to
-                            // Check our routing cache first (populated when SetSessionOutputDevice is called)
-                            var sessionId = session.GetSessionIdentifier ?? i.ToString();
-                            string sessionDeviceId;
-                            lock (_routingLock)
-                            {
-                                if (!_sessionRoutingCache.TryGetValue(sessionId, out sessionDeviceId!))
-                                {
-                                    sessionDeviceId = ""; // Empty if not in cache (unknown routing)
-                                }
-                            }
+                            var sessionId = session.GetSessionIdentifier ?? $"{device.ID}_{i}";
                             
+                            // Skip if we've already seen this session (can appear on multiple devices in rare cases)
+                            if (sessionIdsSeen.Contains(sessionId))
+                            {
+                                continue;
+                            }
+                            sessionIdsSeen.Add(sessionId);
+                            
+                            // The device we're enumerating from IS the device this session is routed to
+                            // This is the OS-reported routing, not a cache
                             sessions.Add(new AudioSessionInfo
                             {
-                                Id = session.GetSessionIdentifier ?? i.ToString(),
+                                Id = sessionId,
                                 Name = session.DisplayName ?? session.GetSessionIdentifier ?? "Unknown",
                                 Volume = session.SimpleAudioVolume?.Volume ?? 0f,
                                 Muted = session.SimpleAudioVolume?.Mute ?? false,
-                                OutputDeviceId = sessionDeviceId
+                                OutputDeviceId = device.ID // Actual device owning this session
                             });
                         }
                         catch (Exception ex)
                         {
-                            _logger.Error($"Error getting session info", ex);
+                            _logger.Debug($"Error getting session info from device {device.ID}: {ex.Message}");
                         }
                     }
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error("Error enumerating audio sessions", ex);
+                    _logger.Debug($"Error enumerating sessions from device {device.ID}: {ex.Message}");
                 }
             }
 
@@ -129,29 +130,38 @@ public sealed class AudioManager : IAudioManager
     {
         try
         {
-            var defaultDevice = _deviceEnumerator.GetDefaultAudioEndpoint(DataFlow.Render, Role.Multimedia);
-            if (defaultDevice == null)
+            // Search for session across all devices (not just default)
+            var deviceCollection = _deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+            
+            foreach (var device in deviceCollection)
             {
-                return;
-            }
-
-            var sessionManager = defaultDevice.AudioSessionManager;
-            var sessionEnumerator = sessionManager.Sessions;
-
-            for (int i = 0; i < sessionEnumerator.Count; i++)
-            {
-                var session = sessionEnumerator[i];
-                var id = session.GetSessionIdentifier ?? i.ToString();
-                if (id == sessionId)
+                try
                 {
-                    if (session.SimpleAudioVolume != null)
+                    var sessionManager = device.AudioSessionManager;
+                    var sessionEnumerator = sessionManager.Sessions;
+
+                    for (int i = 0; i < sessionEnumerator.Count; i++)
                     {
-                        session.SimpleAudioVolume.Volume = Math.Clamp(volume, 0f, 1f);
-                        session.SimpleAudioVolume.Mute = muted;
+                        var session = sessionEnumerator[i];
+                        var id = session.GetSessionIdentifier ?? $"{device.ID}_{i}";
+                        if (id == sessionId)
+                        {
+                            if (session.SimpleAudioVolume != null)
+                            {
+                                session.SimpleAudioVolume.Volume = Math.Clamp(volume, 0f, 1f);
+                                session.SimpleAudioVolume.Mute = muted;
+                            }
+                            return;
+                        }
                     }
-                    return;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"Error checking device {device.ID} for session {sessionId}: {ex.Message}");
                 }
             }
+            
+            throw new ArgumentException($"Audio session not found: {sessionId}", nameof(sessionId));
         }
         catch (Exception ex)
         {
@@ -215,6 +225,9 @@ public sealed class AudioManager : IAudioManager
 
             // Find the session across all devices
             var deviceCollection = _deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+            AudioSessionControl? foundSession = null;
+            string? foundSessionInstanceId = null;
+            
             foreach (var dev in deviceCollection)
             {
                 try
@@ -225,31 +238,15 @@ public sealed class AudioManager : IAudioManager
                     for (int i = 0; i < sessionEnumerator.Count; i++)
                     {
                         var session = sessionEnumerator[i];
-                        var id = session.GetSessionIdentifier ?? i.ToString();
+                        var id = session.GetSessionIdentifier ?? $"{dev.ID}_{i}";
                         if (id == sessionId)
                         {
-                            // Use COM interface to route session to device
-                            var policyConfig = (IPolicyConfig)new PolicyConfigClient();
-                            // Get session instance identifier - NAudio wraps IAudioSessionControl2
-                            // We need to access the underlying COM interface to get the session instance ID
-                            var sessionInstanceId = GetSessionInstanceIdentifier(session);
-                            if (!string.IsNullOrEmpty(sessionInstanceId))
-                            {
-                                policyConfig.SetDefaultEndpointForId(sessionInstanceId, deviceId, Role.Multimedia);
-                                // Cache the routing state
-                                lock (_routingLock)
-                                {
-                                    _sessionRoutingCache[sessionId] = deviceId;
-                                }
-                                _logger.Info($"Session {sessionId} ({session.DisplayName}) routed to device: {device.FriendlyName} ({deviceId})");
-                                return;
-                            }
-                            else
-                            {
-                                _logger.Warn($"Could not get session instance identifier for session {sessionId}");
-                            }
+                            foundSession = session;
+                            foundSessionInstanceId = GetSessionInstanceIdentifier(session);
+                            break;
                         }
                     }
+                    if (foundSession != null) break;
                 }
                 catch (Exception ex)
                 {
@@ -257,12 +254,41 @@ public sealed class AudioManager : IAudioManager
                 }
             }
 
-            throw new ArgumentException($"Audio session not found: {sessionId}", nameof(sessionId));
+            if (foundSession == null)
+            {
+                throw new ArgumentException($"Audio session not found: {sessionId}", nameof(sessionId));
+            }
+
+            if (string.IsNullOrEmpty(foundSessionInstanceId))
+            {
+                // Cannot route - session instance ID is required for per-app routing
+                throw new NotSupportedException($"Per-app audio routing is not supported for session {sessionId}. The session does not provide a valid instance identifier.");
+            }
+
+            // Attempt to route session using Windows API
+            // Note: SetDefaultEndpointForId is the correct API for per-app routing in Windows 10+
+            // However, we cannot verify the routing actually took effect via the API
+            // The routing will be reflected in GetState() on the next call if successful
+            var policyConfig = (IPolicyConfig)new PolicyConfigClient();
+            var hr = policyConfig.SetDefaultEndpointForId(foundSessionInstanceId, deviceId, Role.Multimedia);
+            
+            if (hr != 0)
+            {
+                // COM call failed - per-app routing may not be supported or may have failed
+                throw new InvalidOperationException($"Failed to route session to device. Windows API returned error code: 0x{hr:X8}. Per-app audio routing may not be supported on this system.");
+            }
+
+            _logger.Info($"Session {sessionId} ({foundSession.DisplayName}) routing requested to device: {device.FriendlyName} ({deviceId}). Note: Routing cannot be verified via API and will be reflected in GetState() if successful.");
         }
         catch (COMException ex)
         {
             _logger.Error($"COM error routing session {sessionId} to device {deviceId}", ex);
-            throw new InvalidOperationException($"Failed to route session to device: {ex.Message}", ex);
+            throw new InvalidOperationException($"Failed to route session to device: {ex.Message}. Per-app audio routing may not be supported.", ex);
+        }
+        catch (NotSupportedException)
+        {
+            // Re-throw NotSupportedException as-is
+            throw;
         }
         catch (Exception ex)
         {
@@ -324,10 +350,19 @@ public sealed class AudioManager : IAudioManager
     {
         try
         {
+            // For per-app routing via SetDefaultEndpointForId, we need the session instance identifier
+            // This is typically the same as GetSessionIdentifier, but may need to be formatted differently
             // NAudio's AudioSessionControl wraps IAudioSessionControl2
-            // The session identifier is typically the same as GetSessionIdentifier for routing purposes
-            // For per-app routing, we use the session identifier which uniquely identifies the session
-            return session.GetSessionIdentifier ?? "";
+            // The GetSessionIdentifier property should provide the identifier needed for routing
+            var identifier = session.GetSessionIdentifier;
+            if (string.IsNullOrEmpty(identifier))
+            {
+                return "";
+            }
+            
+            // The identifier format expected by SetDefaultEndpointForId may vary
+            // Return as-is and let the COM call handle validation
+            return identifier;
         }
         catch (Exception ex)
         {

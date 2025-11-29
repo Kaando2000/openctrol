@@ -68,6 +68,8 @@ Creates a new desktop session and returns a WebSocket URL for connection.
 }
 ```
 
+**Note:** The `ttl_seconds` value is automatically clamped to a range of 60–3600 seconds (1 minute to 1 hour) for security and resource management. Values outside this range will be adjusted to the nearest valid boundary.
+
 **Response:**
 ```json
 {

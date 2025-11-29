@@ -508,6 +508,11 @@ public sealed class ControlApiServer : IControlApiServer
                         _audioManager.SetSessionOutputDevice(request.SessionId, request.OutputDeviceId);
                         _logger.Info($"[Audio] Session {request.SessionId} routed to device {request.OutputDeviceId}");
                     }
+                    catch (NotSupportedException ex)
+                    {
+                        _logger.Warn($"[Audio] Per-app routing not supported for session {request.SessionId}: {ex.Message}");
+                        return Results.Json(new ErrorResponse { Error = "per_app_routing_not_supported", Details = ex.Message }, statusCode: 501);
+                    }
                     catch (Exception ex)
                     {
                         _logger.Error($"[Audio] Error routing session {request.SessionId} to device {request.OutputDeviceId}: {ex.Message}", ex);

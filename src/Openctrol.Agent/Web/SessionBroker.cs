@@ -8,6 +8,7 @@ public sealed class SessionBroker : ISessionBroker, IDisposable
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
     private readonly Dictionary<string, DesktopSession> _sessions = new();
+    private readonly Dictionary<string, CancellationTokenSource> _webSocketHandlers = new(); // Track active WebSocket handlers
     private readonly System.Threading.Timer _cleanupTimer;
     private readonly object _lock = new();
 
@@ -66,14 +67,55 @@ public sealed class SessionBroker : ISessionBroker, IDisposable
 
     public void EndSession(string sessionId)
     {
+        CancellationTokenSource? handlerCancellation = null;
+        
         lock (_lock)
         {
             if (_sessions.TryGetValue(sessionId, out var session))
             {
                 session.IsActive = false;
                 _sessions.Remove(sessionId);
-                _logger.Info($"[Session] Ended desktop session {sessionId}");
             }
+            
+            // Signal any active WebSocket handler to close immediately
+            if (_webSocketHandlers.TryGetValue(sessionId, out handlerCancellation))
+            {
+                _webSocketHandlers.Remove(sessionId);
+            }
+        }
+        
+        // Cancel outside lock to avoid deadlock
+        if (handlerCancellation != null)
+        {
+            try
+            {
+                handlerCancellation.Cancel();
+                _logger.Info($"[Session] Ended desktop session {sessionId} and signaled WebSocket handler to close");
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[Session] Error signaling WebSocket handler for session {sessionId}", ex);
+            }
+        }
+        else
+        {
+            _logger.Info($"[Session] Ended desktop session {sessionId}");
+        }
+    }
+    
+    public void RegisterWebSocketHandler(string sessionId, CancellationTokenSource cancellationTokenSource)
+    {
+        lock (_lock)
+        {
+            _webSocketHandlers[sessionId] = cancellationTokenSource;
+        }
+    }
+    
+    public void UnregisterWebSocketHandler(string sessionId)
+    {
+        lock (_lock)
+        {
+            _webSocketHandlers.Remove(sessionId);
         }
     }
 

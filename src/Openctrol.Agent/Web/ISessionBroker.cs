@@ -6,5 +6,9 @@ public interface ISessionBroker
     bool TryGetSession(string sessionId, out DesktopSession session);
     void EndSession(string sessionId);
     IReadOnlyList<DesktopSession> GetActiveSessions();
+    
+    // WebSocket handler registration for immediate termination
+    void RegisterWebSocketHandler(string sessionId, CancellationTokenSource cancellationTokenSource);
+    void UnregisterWebSocketHandler(string sessionId);
 }
 

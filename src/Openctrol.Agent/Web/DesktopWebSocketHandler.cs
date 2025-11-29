@@ -57,6 +57,9 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     {
         try
         {
+            // Register this handler with session broker for immediate termination support
+            _sessionBroker.RegisterWebSocketHandler(_sessionId, _cancellationTokenSource);
+            
             // Send hello message
             await SendHelloAsync();
 
@@ -99,6 +102,9 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         }
         finally
         {
+            // Unregister handler from session broker
+            _sessionBroker.UnregisterWebSocketHandler(_sessionId);
+            
             // Ensure cancellation is set (in case exception occurred before cancellation)
             _cancellationTokenSource.Cancel();
             
@@ -110,10 +116,20 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
 
             if (_webSocket.State == WebSocketState.Open)
             {
-                await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+                try
+                {
+                    await _webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Session ended", CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"[WebSocket] Error closing WebSocket for session {_sessionId}: {ex.Message}");
+                }
             }
 
-            _sessionBroker.EndSession(_sessionId);
+            // Note: Session cleanup is handled by:
+            // 1. REST API EndSession call -> signals cancellation and removes session
+            // 2. Session expiry check -> removes expired sessions periodically
+            // We don't call EndSession here to avoid double-cleanup
             _cancellationTokenSource.Dispose();
             _logger.Info($"[WebSocket] Client disconnected for session {_sessionId}");
         }
