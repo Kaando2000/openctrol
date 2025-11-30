@@ -63,64 +63,69 @@ public sealed class ControlApiServer : IControlApiServer
     public void Start()
     {
         var config = _configManager.GetConfig();
-        var builder = WebApplication.CreateBuilder();
-
-        builder.WebHost.ConfigureKestrel(options =>
+        try
         {
-            // Configure HTTPS if certificate is available
-            if (!string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath))
+            _logger.Info($"[API] Initializing web server on port {config.HttpPort}...");
+            
+            var builder = WebApplication.CreateBuilder();
+
+            builder.WebHost.ConfigureKestrel(options =>
             {
-                try
+                // Configure HTTPS if certificate is available
+                if (!string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath))
                 {
-                    var certPassword = DecryptCertPassword(config.CertPasswordEncrypted);
-                    _certificate = new X509Certificate2(config.CertPath, certPassword);
-                    options.ListenAnyIP(config.HttpPort, listenOptions =>
+                    try
                     {
-                        listenOptions.UseHttps(_certificate);
-                    });
-                    _logger.Info($"HTTPS enabled on port {config.HttpPort} with certificate from {config.CertPath}");
+                        var certPassword = DecryptCertPassword(config.CertPasswordEncrypted);
+                        _certificate = new X509Certificate2(config.CertPath, certPassword);
+                        options.ListenAnyIP(config.HttpPort, listenOptions =>
+                        {
+                            listenOptions.UseHttps(_certificate);
+                        });
+                        _logger.Info($"HTTPS enabled on port {config.HttpPort} with certificate from {config.CertPath}");
+                    }
+                    catch (InvalidOperationException ex)
+                    {
+                        // Certificate password decryption failed - this is a fatal error
+                        // We do NOT fall back to HTTP as this indicates a security misconfiguration
+                        _logger.Error("Fatal: Certificate password decryption failed. HTTPS cannot be enabled. Fix the certificate password encryption in config.", ex);
+                        throw; // Fail startup - certificate configuration is invalid
+                    }
+                    catch (Exception ex)
+                    {
+                        // Other certificate loading errors (file format, permissions, etc.)
+                        _logger.Error("Error loading certificate, falling back to HTTP", ex);
+                        _certificate?.Dispose();
+                        _certificate = null;
+                        options.ListenAnyIP(config.HttpPort);
+                        _logger.Warn("Falling back to HTTP mode due to certificate loading error");
+                    }
                 }
-                catch (InvalidOperationException ex)
+                else
                 {
-                    // Certificate password decryption failed - this is a fatal error
-                    // We do NOT fall back to HTTP as this indicates a security misconfiguration
-                    _logger.Error("Fatal: Certificate password decryption failed. HTTPS cannot be enabled. Fix the certificate password encryption in config.", ex);
-                    throw; // Fail startup - certificate configuration is invalid
-                }
-                catch (Exception ex)
-                {
-                    // Other certificate loading errors (file format, permissions, etc.)
-                    _logger.Error("Error loading certificate, falling back to HTTP", ex);
-                    _certificate?.Dispose();
-                    _certificate = null;
+                    // Fallback to HTTP if no certificate configured
                     options.ListenAnyIP(config.HttpPort);
-                    _logger.Warn("Falling back to HTTP mode due to certificate loading error");
+                    _logger.Info($"HTTP mode (no certificate configured). Listening on port {config.HttpPort}");
                 }
-            }
-            else
-            {
-                // Fallback to HTTP if no certificate configured
-                options.ListenAnyIP(config.HttpPort);
-                _logger.Warn($"HTTP mode (no certificate configured). Listening on port {config.HttpPort}");
-            }
-        });
+            });
 
-        builder.Services.AddControllers();
-        builder.Services.AddEndpointsApiExplorer();
+            builder.Services.AddControllers();
+            builder.Services.AddEndpointsApiExplorer();
 
-        _app = builder.Build();
+            _app = builder.Build();
+            _logger.Info("[API] Web application built successfully");
         
-        // Enable WebSocket support - required for /ws/desktop endpoint
-        _app.UseWebSockets();
+            // Enable WebSocket support - required for /ws/desktop endpoint
+            _app.UseWebSockets();
 
-        // Serve static UI files
-        SetupStaticFiles();
+            // Serve static UI files
+            SetupStaticFiles();
 
-        // UI endpoints (localhost-only)
-        SetupUiEndpoints();
+            // UI endpoints (localhost-only)
+            SetupUiEndpoints();
 
-        // Health endpoint (no auth required - public health check)
-        _app.MapGet("/api/v1/health", () =>
+            // Health endpoint (no auth required - public health check)
+            _app.MapGet("/api/v1/health", () =>
         {
             try
             {
@@ -234,10 +239,10 @@ public sealed class ControlApiServer : IControlApiServer
                     ActiveSessions = 0
                 });
             }
-        });
+            });
 
-        // Create desktop session
-        _app.MapPost("/api/v1/sessions/desktop", async (HttpContext context) =>
+            // Create desktop session
+            _app.MapPost("/api/v1/sessions/desktop", async (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -295,8 +300,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // End desktop session
-        _app.MapPost("/api/v1/sessions/desktop/{id}/end", (HttpContext context, string id) =>
+            // End desktop session
+            _app.MapPost("/api/v1/sessions/desktop/{id}/end", (HttpContext context, string id) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -329,8 +334,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // Power control
-        _app.MapPost("/api/v1/power", async (HttpContext context) =>
+            // Power control
+            _app.MapPost("/api/v1/power", async (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -379,8 +384,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // Audio state
-        _app.MapGet("/api/v1/audio/state", (HttpContext context) =>
+            // Audio state
+            _app.MapGet("/api/v1/audio/state", (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -428,8 +433,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // Set device volume
-        _app.MapPost("/api/v1/audio/device", async (HttpContext context) =>
+            // Set device volume
+            _app.MapPost("/api/v1/audio/device", async (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -491,8 +496,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // Set session volume
-        _app.MapPost("/api/v1/audio/session", async (HttpContext context) =>
+            // Set session volume
+            _app.MapPost("/api/v1/audio/session", async (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -559,8 +564,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // WebSocket endpoint
-        _app.Map("/ws/desktop", async (HttpContext context) =>
+            // WebSocket endpoint
+            _app.Map("/ws/desktop", async (HttpContext context) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
             {
@@ -642,25 +647,165 @@ public sealed class ControlApiServer : IControlApiServer
                 currentConfig.AgentId);
 
             await handler.HandleAsync();
-        });
+            });
 
-        // Start the server asynchronously and observe failures
-        _runTask = _app.RunAsync();
-        _runTask.ContinueWith(task =>
-        {
-            if (task.IsFaulted)
+            // Start the server asynchronously and observe failures
+            _logger.Info($"[API] Starting Kestrel server on port {config.HttpPort}...");
+            
+            // Write directly to Event Log immediately (before async operations)
+            try
             {
-                var ex = task.Exception?.GetBaseException();
-                _logger.Error($"[API] Server encountered a fatal error on port {config.HttpPort}: {ex?.Message}", ex);
-                // Note: In a production scenario, this might trigger service restart
-                // The host should monitor this and handle accordingly
+                System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                    $"[API] Starting web server on port {config.HttpPort}...", 
+                    System.Diagnostics.EventLogEntryType.Information);
             }
-        }, TaskContinuationOptions.OnlyOnFaulted);
+            catch { }
+            
+            try
+            {
+                _runTask = _app.RunAsync();
+            }
+            catch (Exception startEx)
+            {
+                var errorMsg = $"[API] CRITICAL: RunAsync() threw exception immediately: {startEx.Message}";
+                _logger.Error(errorMsg, startEx);
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        $"{errorMsg}\nType: {startEx.GetType().Name}\nStack: {startEx.StackTrace}", 
+                        System.Diagnostics.EventLogEntryType.Error);
+                }
+                catch { }
+                throw;
+            }
+            
+            // Set up error handler for async failures
+            _runTask.ContinueWith(task =>
+            {
+                if (task.IsFaulted)
+                {
+                    var ex = task.Exception?.GetBaseException();
+                    var errorMsg = $"[API] Server encountered a fatal error on port {config.HttpPort}: {ex?.Message}";
+                    _logger.Error(errorMsg, ex);
+                    
+                    // Also write to Event Log as fallback
+                    try
+                    {
+                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                            $"{errorMsg}\nType: {ex?.GetType().Name}\nStack: {ex?.StackTrace}", 
+                            System.Diagnostics.EventLogEntryType.Error);
+                    }
+                    catch { }
+                }
+            }, TaskContinuationOptions.OnlyOnFaulted);
 
-        // Note: RunAsync() is fire-and-forget, so we can't immediately detect port binding failures
-        // However, the continuation above will log any failures that occur
-        // For immediate port conflicts, Kestrel will log errors that we can observe
-        _logger.Info($"[API] Server starting on port {config.HttpPort} (check logs for binding errors)");
+            // Wait for server to start binding (synchronous wait with timeout)
+            // This helps catch immediate binding failures
+            var startTimeout = TimeSpan.FromSeconds(5);
+            var startTime = DateTime.UtcNow;
+            var portListening = false;
+            var bindingError = false;
+            
+            while (DateTime.UtcNow - startTime < startTimeout)
+            {
+                // Check if task has faulted
+                if (_runTask != null && _runTask.IsFaulted)
+                {
+                    var ex = _runTask.Exception?.GetBaseException();
+                    var errorMsg = $"[API] Server failed to start on port {config.HttpPort}: {ex?.Message}";
+                    _logger.Error(errorMsg, ex);
+                    try
+                    {
+                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                            $"{errorMsg}\nType: {ex?.GetType().Name}\nStack: {ex?.StackTrace}", 
+                            System.Diagnostics.EventLogEntryType.Error);
+                    }
+                    catch { }
+                    throw new InvalidOperationException($"Failed to start API server on port {config.HttpPort}", ex);
+                }
+                
+                // Check if port is listening
+                try
+                {
+                    using var client = new System.Net.Sockets.TcpClient();
+                    var connectTask = client.ConnectAsync(IPAddress.Loopback, config.HttpPort);
+                    if (connectTask.Wait(TimeSpan.FromMilliseconds(100)))
+                    {
+                        if (client.Connected)
+                        {
+                            client.Close();
+                            portListening = true;
+                            break;
+                        }
+                    }
+                }
+                catch
+                {
+                    // Port not ready yet, continue waiting
+                }
+                
+                // Small delay before next check
+                System.Threading.Thread.Sleep(200);
+            }
+            
+            // Final check for errors
+            if (_runTask != null && _runTask.IsFaulted)
+            {
+                var ex = _runTask.Exception?.GetBaseException();
+                var errorMsg = $"[API] Server failed to start on port {config.HttpPort}: {ex?.Message}";
+                _logger.Error(errorMsg, ex);
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        $"{errorMsg}\nType: {ex?.GetType().Name}\nStack: {ex?.StackTrace}", 
+                        System.Diagnostics.EventLogEntryType.Error);
+                }
+                catch { }
+                throw new InvalidOperationException($"Failed to start API server on port {config.HttpPort}", ex);
+            }
+            
+            if (portListening)
+            {
+                var protocol = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "https" : "http";
+                _logger.Info($"[BOOT] HTTP API server started successfully on {protocol}://localhost:{config.HttpPort}");
+                _logger.Info($"[API] Health endpoint: {protocol}://localhost:{config.HttpPort}/api/v1/health");
+                _logger.Info($"[API] UI endpoint: {protocol}://localhost:{config.HttpPort}/ui");
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        $"[API] Server started successfully on port {config.HttpPort}\nHealth: {protocol}://localhost:{config.HttpPort}/api/v1/health\nUI: {protocol}://localhost:{config.HttpPort}/ui", 
+                        System.Diagnostics.EventLogEntryType.Information);
+                }
+                catch { }
+            }
+            else
+            {
+                // Port not listening after timeout - this is a warning, not a fatal error
+                // The server might still be starting, or there might be a binding issue
+                var warnMsg = $"[API] Server task started but port {config.HttpPort} is not listening after {startTimeout.TotalSeconds}s timeout. This may indicate a binding issue.";
+                _logger.Warn(warnMsg);
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", warnMsg, System.Diagnostics.EventLogEntryType.Warning);
+                }
+                catch { }
+                // Don't throw - let the server continue, but log the warning
+            }
+        }
+        catch (Exception ex)
+        {
+            var errorMsg = $"[API] Failed to start server on port {config.HttpPort}: {ex.Message}";
+            _logger.Error(errorMsg, ex);
+            
+            // Also write to Event Log as fallback
+            try
+            {
+                System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", errorMsg, System.Diagnostics.EventLogEntryType.Error);
+            }
+            catch { }
+            
+            throw;
+        }
     }
 
     public async Task StopAsync()
@@ -672,7 +817,7 @@ public sealed class ControlApiServer : IControlApiServer
             _app = null;
         }
         
-        // Dispose certificate when server stops
+            // Dispose certificate when server stops
         _certificate?.Dispose();
         _certificate = null;
     }
@@ -681,9 +826,9 @@ public sealed class ControlApiServer : IControlApiServer
     {
         var config = _configManager.GetConfig();
         
-        // SECURITY WARNING: If no API key is configured, authentication is disabled.
-        // This is acceptable ONLY for development/testing. In production, always configure ApiKey.
-        // Empty ApiKey means all REST endpoints are accessible without authentication.
+            // SECURITY WARNING: If no API key is configured, authentication is disabled.
+            // This is acceptable ONLY for development/testing. In production, always configure ApiKey.
+            // Empty ApiKey means all REST endpoints are accessible without authentication.
         if (string.IsNullOrEmpty(config.ApiKey))
         {
             // Log warning on first unauthenticated request to sensitive endpoint
@@ -694,15 +839,15 @@ public sealed class ControlApiServer : IControlApiServer
             return null; // No auth required (development mode)
         }
 
-        // Check for API key in header (X-Openctrol-Key or Authorization: Bearer <key>)
+            // Check for API key in header (X-Openctrol-Key or Authorization: Bearer <key>)
         string? providedKey = null;
         
-        // Try X-Openctrol-Key header first
+            // Try X-Openctrol-Key header first
         if (context.Request.Headers.TryGetValue("X-Openctrol-Key", out var headerValue))
         {
             providedKey = headerValue.ToString();
         }
-        // Try Authorization: Bearer <key>
+            // Try Authorization: Bearer <key>
         else if (context.Request.Headers.TryGetValue("Authorization", out var authHeader))
         {
             var authValue = authHeader.ToString();
@@ -718,7 +863,7 @@ public sealed class ControlApiServer : IControlApiServer
             return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "Missing or invalid credentials" }, statusCode: 401);
         }
 
-        // Use constant-time comparison to prevent timing attacks
+            // Use constant-time comparison to prevent timing attacks
         if (!CryptographicOperations.FixedTimeEquals(
             System.Text.Encoding.UTF8.GetBytes(config.ApiKey),
             System.Text.Encoding.UTF8.GetBytes(providedKey)))
@@ -736,14 +881,14 @@ public sealed class ControlApiServer : IControlApiServer
     /// </summary>
     private static string SanitizeErrorMessage(Exception ex, string defaultMessage)
     {
-        // For ArgumentException, InvalidOperationException, etc., use the message as-is
-        // (these are usually safe and informative for clients)
+            // For ArgumentException, InvalidOperationException, etc., use the message as-is
+            // (these are usually safe and informative for clients)
         if (ex is ArgumentException || ex is InvalidOperationException || ex is NotSupportedException)
         {
             return ex.Message;
         }
         
-        // For other exceptions, return generic message to avoid leaking internal details
+            // For other exceptions, return generic message to avoid leaking internal details
         return defaultMessage;
     }
 
@@ -795,7 +940,7 @@ public sealed class ControlApiServer : IControlApiServer
             return Results.Json(new ErrorResponse { Error = "forbidden", Details = "Could not determine client IP address" }, statusCode: 403);
         }
 
-        // Check for IPv4 loopback (127.0.0.1) or IPv6 loopback (::1)
+            // Check for IPv4 loopback (127.0.0.1) or IPv6 loopback (::1)
         if (!IPAddress.IsLoopback(remoteIp))
         {
             return Results.Json(new ErrorResponse { Error = "forbidden", Details = "UI endpoints are only accessible from localhost" }, statusCode: 403);
@@ -811,8 +956,8 @@ public sealed class ControlApiServer : IControlApiServer
     {
         if (_app == null) return;
 
-        // Serve UI HTML at /ui
-        _app.MapGet("/ui", (HttpContext context) =>
+            // Serve UI HTML at /ui
+            _app.MapGet("/ui", (HttpContext context) =>
         {
             // Check localhost-only
             var localhostCheck = CheckLocalhostOnly(context);
@@ -825,8 +970,8 @@ public sealed class ControlApiServer : IControlApiServer
             return Results.Content(html, "text/html");
         });
 
-        // Serve UI JavaScript at /ui/app.js
-        _app.MapGet("/ui/app.js", (HttpContext context) =>
+            // Serve UI JavaScript at /ui/app.js
+            _app.MapGet("/ui/app.js", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -846,8 +991,8 @@ public sealed class ControlApiServer : IControlApiServer
     {
         if (_app == null) return;
 
-        // GET /api/v1/ui/status - Get aggregated status
-        _app.MapGet("/api/v1/ui/status", (HttpContext context) =>
+            // GET /api/v1/ui/status - Get aggregated status
+            _app.MapGet("/api/v1/ui/status", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -928,8 +1073,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // GET /api/v1/ui/config - Get config (sanitized)
-        _app.MapGet("/api/v1/ui/config", (HttpContext context) =>
+            // GET /api/v1/ui/config - Get config (sanitized)
+            _app.MapGet("/api/v1/ui/config", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -960,8 +1105,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // POST /api/v1/ui/config - Update config
-        _app.MapPost("/api/v1/ui/config", async (HttpContext context) =>
+            // POST /api/v1/ui/config - Update config
+            _app.MapPost("/api/v1/ui/config", async (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -1085,8 +1230,8 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-        // POST /api/v1/ui/service/stop
-        _app.MapPost("/api/v1/ui/service/stop", (HttpContext context) =>
+            // POST /api/v1/ui/service/stop
+            _app.MapPost("/api/v1/ui/service/stop", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -1097,8 +1242,8 @@ public sealed class ControlApiServer : IControlApiServer
             return ControlService("stop");
         });
 
-        // POST /api/v1/ui/service/start
-        _app.MapPost("/api/v1/ui/service/start", (HttpContext context) =>
+            // POST /api/v1/ui/service/start
+            _app.MapPost("/api/v1/ui/service/start", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -1109,8 +1254,8 @@ public sealed class ControlApiServer : IControlApiServer
             return ControlService("start");
         });
 
-        // POST /api/v1/ui/service/restart
-        _app.MapPost("/api/v1/ui/service/restart", (HttpContext context) =>
+            // POST /api/v1/ui/service/restart
+            _app.MapPost("/api/v1/ui/service/restart", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)
@@ -1121,8 +1266,8 @@ public sealed class ControlApiServer : IControlApiServer
             return ControlService("restart");
         });
 
-        // POST /api/v1/ui/service/uninstall
-        _app.MapPost("/api/v1/ui/service/uninstall", (HttpContext context) =>
+            // POST /api/v1/ui/service/uninstall
+            _app.MapPost("/api/v1/ui/service/uninstall", (HttpContext context) =>
         {
             var localhostCheck = CheckLocalhostOnly(context);
             if (localhostCheck != null)

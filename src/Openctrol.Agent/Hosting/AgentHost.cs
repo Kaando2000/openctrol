@@ -3,6 +3,7 @@ using Openctrol.Agent.Config;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 using Openctrol.Agent.Web;
 using Openctrol.Agent.RemoteDesktop;
+using System.IO;
 
 namespace Openctrol.Agent.Hosting;
 
@@ -31,10 +32,18 @@ public sealed class AgentHost : BackgroundService, IUptimeService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
-        _logger.Info("Openctrol Agent starting...");
+        var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+        _logger.Info($"[BOOT] Openctrol Agent starting, version={version}");
 
         try
         {
+            // Load and validate configuration
+            var configPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
+                "Openctrol",
+                "config.json");
+            _logger.Info($"[BOOT] Config loaded from {configPath}");
+            
             // Validate configuration
             try
             {
@@ -48,12 +57,12 @@ public sealed class AgentHost : BackgroundService, IUptimeService
 
             var config = _configManager.GetConfig();
             
-            // Log configuration summary
-            var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
+            // Log configuration summary with [BOOT] and [CONFIG] prefixes
             var haIdCount = config.AllowedHaIds?.Count ?? 0;
             var tlsMode = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "HTTPS" : "HTTP";
             var authMode = string.IsNullOrEmpty(config.ApiKey) ? "DISABLED (development mode)" : "ENABLED";
             
+            _logger.Info($"[CONFIG] HTTP port={config.HttpPort}, UseHttps={tlsMode == "HTTPS"}, CertPath={config.CertPath ?? "<none>"}");
             _logger.Info("=== Openctrol Agent Configuration ===");
             _logger.Info($"Version: {version}");
             _logger.Info($"Agent ID: {config.AgentId}");
@@ -86,22 +95,51 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             {
                 try
                 {
+                    _logger.Info("[BOOT] Starting HTTP API server...");
+                    
+                    // Write directly to Event Log before starting
+                    try
+                    {
+                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                            "[BOOT] Starting HTTP API server...", 
+                            System.Diagnostics.EventLogEntryType.Information);
+                    }
+                    catch { }
+                    
                     _apiServer.Start();
-                    _logger.Info("[API] Server started");
+                    
+                    // Success message is logged by ControlApiServer.Start()
                 }
                 catch (Exception ex)
                 {
-                    _logger.Error("[API] Failed to start API server - this is a fatal error", ex);
+                    var errorMsg = $"[API] Failed to start API server - this is a fatal error: {ex.Message}";
+                    _logger.Error(errorMsg, ex);
+                    
+                    // Write directly to Event Log
+                    try
+                    {
+                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                            $"{errorMsg}\nType: {ex.GetType().Name}\nStack: {ex.StackTrace}", 
+                            System.Diagnostics.EventLogEntryType.Error);
+                    }
+                    catch { }
+                    
                     throw; // Fail startup if API server cannot start
                 }
             }
             else
             {
                 _logger.Warn("[API] Server not available (stub)");
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        "[API] WARNING: Server not available (stub)", 
+                        System.Diagnostics.EventLogEntryType.Warning);
+                }
+                catch { }
             }
 
-
-            _logger.Info("Openctrol Agent started successfully");
+            _logger.Info("[BOOT] Openctrol Agent started successfully");
 
             // Keep running until cancellation
             while (!stoppingToken.IsCancellationRequested)

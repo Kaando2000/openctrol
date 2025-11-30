@@ -1,4 +1,4 @@
-# Openctrol Agent Uninstaller Script
+﻿# Openctrol Agent Uninstaller Script
 # Location: setup/uninstall.ps1
 # Removes Openctrol Agent Windows service and files
 # Requires Administrator privileges
@@ -70,8 +70,37 @@ try {
         if ($service.Status -eq "Running") {
             Write-Host "  Stopping service..." -ForegroundColor Gray
             Stop-Service -Name $ServiceName -Force -ErrorAction Stop
+            Start-Sleep -Seconds 3
+            
+            # Wait for service to fully stop
+            $timeout = 30
+            $elapsed = 0
+            while ($service.Status -ne "Stopped" -and $elapsed -lt $timeout) {
+                Start-Sleep -Seconds 1
+                $service.Refresh()
+                $elapsed++
+            }
+            
+            if ($service.Status -eq "Stopped") {
+                Write-Host "  Service stopped" -ForegroundColor Green
+            } else {
+                Write-Warning "Service did not stop within timeout, attempting to kill process..."
+            }
+        }
+        
+        # Kill any remaining Openctrol.Agent.exe processes
+        $processes = Get-Process -Name "Openctrol.Agent" -ErrorAction SilentlyContinue
+        if ($processes) {
+            Write-Host "  Killing remaining processes..." -ForegroundColor Gray
+            foreach ($proc in $processes) {
+                try {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                    Write-Host "    Killed process $($proc.Id)" -ForegroundColor Gray
+                } catch {
+                    Write-Warning "    Failed to kill process $($proc.Id): $_"
+                }
+            }
             Start-Sleep -Seconds 2
-            Write-Host "  Service stopped" -ForegroundColor Green
         }
         
         Write-Host "  Deleting service..." -ForegroundColor Gray
@@ -86,11 +115,36 @@ try {
             Write-Warning "Service may still exist. You may need to reboot to complete removal."
         }
     } else {
-        Write-Host "  Service does not exist, skipping" -ForegroundColor Gray
+        Write-Host "  Service does not exist, checking for running processes..." -ForegroundColor Gray
+        # Kill any Openctrol.Agent.exe processes even if service doesn't exist
+        $processes = Get-Process -Name "Openctrol.Agent" -ErrorAction SilentlyContinue
+        if ($processes) {
+            Write-Host "  Killing orphaned processes..." -ForegroundColor Gray
+            foreach ($proc in $processes) {
+                try {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                    Write-Host "    Killed process $($proc.Id)" -ForegroundColor Gray
+                } catch {
+                    Write-Warning "    Failed to kill process $($proc.Id): $_"
+                }
+            }
+            Start-Sleep -Seconds 2
+        }
     }
 } catch {
     Write-Warning "Error removing service: $_"
-    Write-Warning "Service may need to be removed manually"
+    Write-Warning "Attempting to kill processes anyway..."
+    try {
+        $processes = Get-Process -Name "Openctrol.Agent" -ErrorAction SilentlyContinue
+        if ($processes) {
+            foreach ($proc in $processes) {
+                Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue
+            }
+            Start-Sleep -Seconds 2
+        }
+    } catch {
+        Write-Warning "Failed to kill processes: $_"
+    }
 }
 
 # Step 2: Remove firewall rule
@@ -117,10 +171,60 @@ if (-not $SkipFirewallCleanup) {
 # Step 3: Remove installation directory
 Write-Host "[3/4] Removing Installation Files..." -ForegroundColor Yellow
 try {
+    # Ensure no processes are still running
+    $processes = Get-Process -Name "Openctrol.Agent" -ErrorAction SilentlyContinue
+    if ($processes) {
+        Write-Host "  Waiting for processes to exit..." -ForegroundColor Yellow
+        $timeout = 10
+        $elapsed = 0
+        while ($processes -and $elapsed -lt $timeout) {
+            Start-Sleep -Seconds 1
+            $processes = Get-Process -Name "Openctrol.Agent" -ErrorAction SilentlyContinue
+            $elapsed++
+        }
+        if ($processes) {
+            Write-Warning "  Processes still running, attempting force kill..."
+            foreach ($proc in $processes) {
+                try {
+                    Stop-Process -Id $proc.Id -Force -ErrorAction Stop
+                } catch {
+                    Write-Warning "    Failed to kill process $($proc.Id): $_"
+                }
+            }
+            Start-Sleep -Seconds 2
+        }
+    }
+    
     if (Test-Path $InstallPath) {
         Write-Host "  Removing: $InstallPath" -ForegroundColor Gray
-        Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
-        Write-Host "  Installation files removed" -ForegroundColor Green
+        
+        # Try to remove files with retries
+        $maxRetries = 3
+        $retryCount = 0
+        $removed = $false
+        
+        while ($retryCount -lt $maxRetries -and -not $removed) {
+            try {
+                # Remove read-only attributes first
+                Get-ChildItem -Path $InstallPath -Recurse -Force | ForEach-Object {
+                    $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly)
+                }
+                
+                Remove-Item -Path $InstallPath -Recurse -Force -ErrorAction Stop
+                $removed = $true
+                Write-Host "  Installation files removed" -ForegroundColor Green
+            } catch {
+                $retryCount++
+                if ($retryCount -lt $maxRetries) {
+                    Write-Host "  Retry $retryCount/$maxRetries..." -ForegroundColor Yellow
+                    Start-Sleep -Seconds 2
+                } else {
+                    Write-Warning "Failed to remove installation directory after $maxRetries attempts: $_"
+                    Write-Warning "You may need to remove it manually: $InstallPath"
+                    Write-Warning "Some files may be locked. Try rebooting and then removing the directory."
+                }
+            }
+        }
     } else {
         Write-Host "  Installation directory does not exist, skipping" -ForegroundColor Gray
     }
@@ -182,10 +286,11 @@ if ($RemoveProgramData) {
     Write-Host "  ✓ Firewall Rules" -ForegroundColor White
     Write-Host "  ✓ Installation Files" -ForegroundColor White
     Write-Host ""
-    Write-Host "Preserved (for reinstallation):" -ForegroundColor Cyan
-    Write-Host "  - Configuration: $ConfigPath" -ForegroundColor White
-    $logsPath = Join-Path $ConfigPath "logs"
-    Write-Host "  - Logs: $logsPath" -ForegroundColor White
+    $preservedMsg = 'Preserved (for reinstallation):'
+    Write-Host $preservedMsg -ForegroundColor Cyan
+    Write-Host ('  - Configuration: ' + $ConfigPath) -ForegroundColor White
+    $logsPath = Join-Path $ConfigPath 'logs'
+    Write-Host ('  - Logs: ' + $logsPath) -ForegroundColor White
 }
 
 Write-Host ""

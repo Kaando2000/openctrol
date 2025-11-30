@@ -16,7 +16,19 @@ public sealed class SystemStateMonitor : ISystemStateMonitor, IDisposable
     public SystemStateMonitor(ILogger logger)
     {
         _logger = logger;
-        _currentSnapshot = DetectState();
+        try
+        {
+            _currentSnapshot = DetectState();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Failed to detect initial system state, defaulting to safe state", ex);
+            _currentSnapshot = new SystemStateSnapshot
+            {
+                ActiveSessionId = 0,
+                DesktopState = DesktopState.Unknown
+            };
+        }
         _pollTimer = new System.Threading.Timer(OnPoll, null, TimeSpan.Zero, TimeSpan.FromSeconds(2));
     }
 
@@ -63,8 +75,43 @@ public sealed class SystemStateMonitor : ISystemStateMonitor, IDisposable
 
     private SystemStateSnapshot DetectState()
     {
-        var activeSessionId = (int)WTSGetActiveConsoleSessionId();
-        var desktopState = DetectDesktopState();
+        int activeSessionId;
+        try
+        {
+            activeSessionId = (int)WTSGetActiveConsoleSessionId();
+            // Check if the session ID is valid (not SESSION_ID_NONE)
+            if (activeSessionId == unchecked((int)SESSION_ID_NONE))
+            {
+                // No active console session
+                activeSessionId = unchecked((int)SESSION_ID_NONE);
+            }
+        }
+        catch (EntryPointNotFoundException ex)
+        {
+            _logger.Warn($"WTSGetActiveConsoleSessionId not available, treating as no active console session: {ex.Message}");
+            activeSessionId = unchecked((int)SESSION_ID_NONE);
+        }
+        catch (DllNotFoundException ex)
+        {
+            _logger.Warn($"kernel32.dll not found, treating as no active console session: {ex.Message}");
+            activeSessionId = unchecked((int)SESSION_ID_NONE);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error getting active console session ID, treating as no active console session", ex);
+            activeSessionId = unchecked((int)SESSION_ID_NONE);
+        }
+
+        DesktopState desktopState;
+        try
+        {
+            desktopState = DetectDesktopState();
+        }
+        catch (Exception ex)
+        {
+            _logger.Error("Error detecting desktop state", ex);
+            desktopState = DesktopState.Unknown;
+        }
 
         return new SystemStateSnapshot
         {
@@ -137,7 +184,11 @@ public sealed class SystemStateMonitor : ISystemStateMonitor, IDisposable
     }
 
     // P/Invoke declarations
-    [DllImport("wtsapi32.dll", SetLastError = true)]
+    private const uint SESSION_ID_NONE = 0xFFFFFFFF;
+    
+    // WTSGetActiveConsoleSessionId is in kernel32.dll (not wtsapi32.dll)
+    // It may not be available on all Windows versions, so we handle EntryPointNotFoundException
+    [DllImport("kernel32.dll", SetLastError = false, EntryPoint = "WTSGetActiveConsoleSessionId", ExactSpelling = false, CallingConvention = CallingConvention.Winapi)]
     private static extern uint WTSGetActiveConsoleSessionId();
 
     [DllImport("user32.dll")]
