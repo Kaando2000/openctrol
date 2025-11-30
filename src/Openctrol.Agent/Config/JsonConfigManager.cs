@@ -92,6 +92,90 @@ public sealed class JsonConfigManager : IConfigManager
         }
     }
 
+    public void SaveConfig(AgentConfig config)
+    {
+        if (config == null)
+        {
+            throw new ArgumentNullException(nameof(config));
+        }
+
+        lock (_lock)
+        {
+            // Validate the config before saving
+            var originalConfig = _config;
+            _config = config; // Temporarily set for validation
+            try
+            {
+                ValidateConfig();
+            }
+            catch
+            {
+                _config = originalConfig; // Restore on validation failure
+                throw;
+            }
+
+            // Ensure AllowedHaIds is never null
+            if (config.AllowedHaIds == null)
+            {
+                config.AllowedHaIds = new List<string>();
+            }
+
+            // Ensure AgentId is set
+            if (string.IsNullOrEmpty(config.AgentId))
+            {
+                config.AgentId = Guid.NewGuid().ToString();
+            }
+
+            // Serialize and write to file
+            var json = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(_configPath, json);
+
+            // Set restrictive file permissions
+            try
+            {
+                var fileInfo = new FileInfo(_configPath);
+                var fileSecurity = fileInfo.GetAccessControl();
+                
+                // Remove inherited permissions
+                fileSecurity.SetAccessRuleProtection(true, false);
+                
+                // Remove all existing access rules
+                var existingRules = fileSecurity.GetAccessRules(true, true, typeof(System.Security.Principal.SecurityIdentifier));
+                foreach (System.Security.AccessControl.AuthorizationRule rule in existingRules)
+                {
+                    var accessRule = rule as System.Security.AccessControl.FileSystemAccessRule;
+                    if (accessRule != null)
+                    {
+                        fileSecurity.RemoveAccessRule(accessRule);
+                    }
+                }
+                
+                // Grant full control to Administrators and SYSTEM
+                var adminSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.BuiltinAdministratorsSid, null);
+                var systemSid = new System.Security.Principal.SecurityIdentifier(System.Security.Principal.WellKnownSidType.LocalSystemSid, null);
+                
+                fileSecurity.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                    adminSid, 
+                    System.Security.AccessControl.FileSystemRights.FullControl, 
+                    System.Security.AccessControl.AccessControlType.Allow));
+                
+                fileSecurity.AddAccessRule(new System.Security.AccessControl.FileSystemAccessRule(
+                    systemSid, 
+                    System.Security.AccessControl.FileSystemRights.FullControl, 
+                    System.Security.AccessControl.AccessControlType.Allow));
+                
+                fileInfo.SetAccessControl(fileSecurity);
+            }
+            catch
+            {
+                // Log but don't fail - permissions may not be settable in all environments
+            }
+
+            // Update in-memory config
+            _config = config;
+        }
+    }
+
     private AgentConfig LoadOrCreateDefault()
     {
         if (File.Exists(_configPath))

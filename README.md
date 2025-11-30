@@ -72,6 +72,20 @@ The **PowerShell installer** is the recommended and supported installation metho
 - **Service**: `OpenctrolAgent` (Windows Service)
 
 
+### Local Web UI
+
+After installation, access the local control panel at:
+
+**`http://localhost:44325/ui`** (or `https://localhost:44325/ui` if HTTPS is enabled)
+
+The UI provides:
+- Service status and health monitoring
+- Configuration management
+- Service controls (start/stop/restart)
+- Uninstall option
+
+**Note**: The UI is only accessible from localhost for security.
+
 ### Configuration
 
 Configuration is stored at `C:\ProgramData\Openctrol\config.json`. The installer creates this file with your settings, or you can edit it manually:

@@ -27,6 +27,140 @@ If no API key is configured in `AgentConfig.ApiKey`, authentication is disabled 
 ```
 with HTTP status `401 Unauthorized`.
 
+## Local Web UI
+
+**GET** `/ui`
+
+A local-only web-based control panel for managing the agent. **Only accessible from localhost** (127.0.0.1 or ::1).
+
+The UI provides:
+- Service status and health monitoring
+- Configuration management
+- Service controls (start/stop/restart)
+- Uninstall option
+
+**Security**: All `/ui` and `/api/v1/ui/*` endpoints are restricted to localhost only. Requests from other IP addresses will receive `403 Forbidden`.
+
+### UI API Endpoints (Localhost Only)
+
+All UI endpoints are restricted to localhost only. Non-localhost requests will receive `403 Forbidden`.
+
+#### UI Status
+
+**GET** `/api/v1/ui/status`
+
+Returns aggregated status information for the dashboard.
+
+**Response:**
+```json
+{
+  "agent": {
+    "agent_id": "guid-string",
+    "version": "1.0.0",
+    "uptime_seconds": 12345
+  },
+  "service": {
+    "service_name": "OpenctrolAgent",
+    "is_service_installed": true,
+    "service_status": "Running"
+  },
+  "health": {
+    "desktop_state": "desktop",
+    "is_degraded": false,
+    "active_sessions": 1
+  },
+  "config": {
+    "port": 44325,
+    "use_https": false,
+    "api_key_configured": true,
+    "allowed_ha_ids": ["home-assistant-1"]
+  }
+}
+```
+
+#### UI Config
+
+**GET** `/api/v1/ui/config`
+
+Returns sanitized configuration (no secrets).
+
+**Response:**
+```json
+{
+  "port": 44325,
+  "use_https": false,
+  "cert_path": "",
+  "api_key_configured": true,
+  "allowed_ha_ids": ["home-assistant-1"],
+  "allow_empty_api_key": false,
+  "require_auth_for_health": false
+}
+```
+
+**POST** `/api/v1/ui/config`
+
+Updates configuration. Changes require a service restart to take effect.
+
+**Request Body:**
+```json
+{
+  "port": 8080,
+  "use_https": true,
+  "cert_path": "C:\\certs\\cert.pfx",
+  "api_key": "new-api-key",
+  "allowed_ha_ids": ["ha-1", "ha-2"],
+  "allow_empty_api_key": false
+}
+```
+
+All fields are optional. Only provided fields will be updated.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Config updated. Please restart the Openctrol Agent service to apply changes."
+}
+```
+
+#### Service Control
+
+**POST** `/api/v1/ui/service/start`
+
+Starts the Windows service.
+
+**POST** `/api/v1/ui/service/stop`
+
+Stops the Windows service.
+
+**POST** `/api/v1/ui/service/restart`
+
+Restarts the Windows service.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Service started successfully",
+  "service_status": "Running"
+}
+```
+
+**POST** `/api/v1/ui/service/uninstall`
+
+Initiates uninstallation by running the uninstall script.
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Uninstall script invoked. The service will stop and remove itself.",
+  "statusCode": 202
+}
+```
+
+**Note**: The uninstall script must be present in the expected location. If not found, returns `400 Bad Request`.
+
 ## REST API Endpoints
 
 ### Health Check

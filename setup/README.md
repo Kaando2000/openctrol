@@ -175,6 +175,25 @@ Restart-Service -Name OpenctrolAgent
 - **Service Account**: Runs as LocalSystem (required for desktop access)
 - **Firewall Rules**: Created only if explicitly requested
 
+## Local Web UI
+
+After installation, you can access a local web-based control panel:
+
+**URL**: `http://localhost:<port>/ui` (or `https://localhost:<port>/ui` if HTTPS is enabled)
+
+**Note**: The UI is only accessible from the local machine (localhost) for security.
+
+The UI provides:
+- **Service Status**: View agent health, desktop state, and active sessions
+- **Configuration**: View and edit basic configuration (port, HTTPS, API key, allowed HA IDs)
+- **Service Controls**: Start, stop, restart the Windows service
+- **Uninstall**: Trigger uninstallation (if uninstall script is present)
+
+**Important**: 
+- The UI is restricted to localhost only - it cannot be accessed from other machines on the network
+- Configuration changes require a service restart to take effect
+- The UI does not expose sensitive information (API keys, certificate passwords)
+
 ## Additional Resources
 
 - [API Documentation](../docs/API.md) - Complete REST API and WebSocket documentation

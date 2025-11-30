@@ -16,6 +16,9 @@ using Openctrol.Agent.RemoteDesktop;
 using Openctrol.Agent.Security;
 using Openctrol.Agent.SystemState;
 using Openctrol.Agent.Web.Dtos;
+using System.Net;
+using System.ServiceProcess;
+using System.Diagnostics;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 
 namespace Openctrol.Agent.Web;
@@ -109,6 +112,12 @@ public sealed class ControlApiServer : IControlApiServer
         
         // Enable WebSocket support - required for /ws/desktop endpoint
         _app.UseWebSockets();
+
+        // Serve static UI files
+        SetupStaticFiles();
+
+        // UI endpoints (localhost-only)
+        SetupUiEndpoints();
 
         // Health endpoint (no auth required - public health check)
         _app.MapGet("/api/v1/health", () =>
@@ -771,6 +780,998 @@ public sealed class ControlApiServer : IControlApiServer
         {
             throw new InvalidOperationException("Unexpected error decrypting certificate password. Ensure the password was encrypted using DPAPI (DataProtectionScope.LocalMachine).", ex);
         }
+    }
+
+    /// <summary>
+    /// Checks if the request is from localhost (127.0.0.1 or ::1).
+    /// Returns null if localhost, or an error result if not.
+    /// </summary>
+    private static IResult? CheckLocalhostOnly(HttpContext context)
+    {
+        var remoteIp = context.Connection.RemoteIpAddress;
+        
+        if (remoteIp == null)
+        {
+            return Results.Json(new ErrorResponse { Error = "forbidden", Details = "Could not determine client IP address" }, statusCode: 403);
+        }
+
+        // Check for IPv4 loopback (127.0.0.1) or IPv6 loopback (::1)
+        if (!IPAddress.IsLoopback(remoteIp))
+        {
+            return Results.Json(new ErrorResponse { Error = "forbidden", Details = "UI endpoints are only accessible from localhost" }, statusCode: 403);
+        }
+
+        return null; // Request is from localhost
+    }
+
+    /// <summary>
+    /// Sets up static file serving for the UI.
+    /// </summary>
+    private void SetupStaticFiles()
+    {
+        if (_app == null) return;
+
+        // Serve UI HTML at /ui
+        _app.MapGet("/ui", (HttpContext context) =>
+        {
+            // Check localhost-only
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            var html = GetUiHtml();
+            return Results.Content(html, "text/html");
+        });
+
+        // Serve UI JavaScript at /ui/app.js
+        _app.MapGet("/ui/app.js", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            var js = GetUiJavaScript();
+            return Results.Content(js, "application/javascript");
+        });
+    }
+
+    /// <summary>
+    /// Sets up UI API endpoints.
+    /// </summary>
+    private void SetupUiEndpoints()
+    {
+        if (_app == null) return;
+
+        // GET /api/v1/ui/status - Get aggregated status
+        _app.MapGet("/api/v1/ui/status", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            try
+            {
+                var config = _configManager.GetConfig();
+                var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
+                
+                // Get service status
+                var serviceStatus = GetServiceStatus();
+                
+                // Get health info
+                var desktopState = "unknown";
+                var isDegraded = false;
+                var activeSessions = 0;
+                
+                try
+                {
+                    var systemState = _systemStateMonitor?.GetCurrent();
+                    if (systemState != null)
+                    {
+                        desktopState = systemState.DesktopState switch
+                        {
+                            DesktopState.LoginScreen => "login_screen",
+                            DesktopState.Desktop => "desktop",
+                            DesktopState.Locked => "locked",
+                            _ => "unknown"
+                        };
+                    }
+                    
+                    var remoteDesktopStatus = _remoteDesktopEngine?.GetStatus();
+                    if (remoteDesktopStatus != null)
+                    {
+                        isDegraded = remoteDesktopStatus.IsDegraded;
+                    }
+                    
+                    activeSessions = _sessionBroker?.GetActiveSessions().Count ?? 0;
+                }
+                catch (Exception ex)
+                {
+                    _logger.Debug($"[UI] Error getting health info: {ex.Message}");
+                }
+
+                var status = new UiStatusDto
+                {
+                    Agent = new AgentInfoDto
+                    {
+                        AgentId = config.AgentId,
+                        Version = "1.0.0",
+                        UptimeSeconds = uptimeSeconds
+                    },
+                    Service = serviceStatus,
+                    Health = new HealthInfoDto
+                    {
+                        DesktopState = desktopState,
+                        IsDegraded = isDegraded,
+                        ActiveSessions = activeSessions
+                    },
+                    Config = new ConfigSummaryDto
+                    {
+                        Port = config.HttpPort,
+                        UseHttps = !string.IsNullOrEmpty(config.CertPath),
+                        ApiKeyConfigured = !string.IsNullOrEmpty(config.ApiKey),
+                        AllowedHaIds = config.AllowedHaIds?.ToList() ?? new List<string>()
+                    }
+                };
+
+                return Results.Json(status);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[UI] Error in status endpoint", ex);
+                return Results.Json(new ErrorResponse { Error = "internal_error", Details = "Failed to get status" }, statusCode: 500);
+            }
+        });
+
+        // GET /api/v1/ui/config - Get config (sanitized)
+        _app.MapGet("/api/v1/ui/config", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            try
+            {
+                var config = _configManager.GetConfig();
+                var uiConfig = new UiConfigDto
+                {
+                    Port = config.HttpPort,
+                    UseHttps = !string.IsNullOrEmpty(config.CertPath),
+                    CertPath = config.CertPath ?? "",
+                    ApiKeyConfigured = !string.IsNullOrEmpty(config.ApiKey),
+                    AllowedHaIds = config.AllowedHaIds?.ToList() ?? new List<string>(),
+                    AllowEmptyApiKey = string.IsNullOrEmpty(config.ApiKey), // If empty, it's allowed
+                    RequireAuthForHealth = false // Health endpoint doesn't require auth currently
+                };
+
+                return Results.Json(uiConfig);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[UI] Error getting config", ex);
+                return Results.Json(new ErrorResponse { Error = "internal_error", Details = "Failed to get config" }, statusCode: 500);
+            }
+        });
+
+        // POST /api/v1/ui/config - Update config
+        _app.MapPost("/api/v1/ui/config", async (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            try
+            {
+                var request = await JsonSerializer.DeserializeAsync<UiConfigUpdateRequest>(
+                    context.Request.Body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (request == null)
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Request body is required" }, statusCode: 400);
+                }
+
+                var currentConfig = _configManager.GetConfig();
+                
+                // Validate port
+                if (request.Port.HasValue)
+                {
+                    if (request.Port.Value < 1 || request.Port.Value > 65535)
+                    {
+                        return Results.Json(new ErrorResponse { Error = "invalid_port", Details = "Port must be between 1 and 65535" }, statusCode: 400);
+                    }
+                    currentConfig.HttpPort = request.Port.Value;
+                }
+
+                // Validate HTTPS config
+                if (request.UseHttps.HasValue && request.UseHttps.Value)
+                {
+                    var certPath = request.CertPath ?? currentConfig.CertPath;
+                    if (string.IsNullOrEmpty(certPath))
+                    {
+                        return Results.Json(new ErrorResponse { Error = "invalid_cert", Details = "Certificate path is required when HTTPS is enabled" }, statusCode: 400);
+                    }
+                    if (!File.Exists(certPath))
+                    {
+                        return Results.Json(new ErrorResponse { Error = "cert_not_found", Details = $"Certificate file not found: {certPath}" }, statusCode: 400);
+                    }
+                    currentConfig.CertPath = certPath;
+                }
+                else if (request.UseHttps.HasValue && !request.UseHttps.Value)
+                {
+                    currentConfig.CertPath = "";
+                    currentConfig.CertPasswordEncrypted = "";
+                }
+
+                // Update API key if provided
+                if (request.ApiKey != null)
+                {
+                    if (string.IsNullOrEmpty(request.ApiKey) && !(request.AllowEmptyApiKey ?? false))
+                    {
+                        // Check if we already have an API key
+                        if (string.IsNullOrEmpty(currentConfig.ApiKey))
+                        {
+                            return Results.Json(new ErrorResponse { Error = "api_key_required", Details = "API key is required. Set allowEmptyApiKey to true to allow empty API key." }, statusCode: 400);
+                        }
+                        // If empty and we have existing key, keep it
+                    }
+                    else if (!string.IsNullOrEmpty(request.ApiKey))
+                    {
+                        currentConfig.ApiKey = request.ApiKey;
+                    }
+                }
+
+                // Update allowed HA IDs
+                if (request.AllowedHaIds != null)
+                {
+                    currentConfig.AllowedHaIds = request.AllowedHaIds;
+                }
+
+                // Ensure AgentId is set
+                if (string.IsNullOrEmpty(currentConfig.AgentId))
+                {
+                    currentConfig.AgentId = Guid.NewGuid().ToString();
+                }
+
+                // Ensure AllowedHaIds is not null
+                if (currentConfig.AllowedHaIds == null)
+                {
+                    currentConfig.AllowedHaIds = new List<string>();
+                }
+
+                // Validate the updated config before saving
+                // Basic validation
+                if (currentConfig.HttpPort < 1 || currentConfig.HttpPort > 65535)
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_port", Details = "Port must be between 1 and 65535" }, statusCode: 400);
+                }
+
+                if (!string.IsNullOrEmpty(currentConfig.CertPath) && !File.Exists(currentConfig.CertPath))
+                {
+                    return Results.Json(new ErrorResponse { Error = "cert_not_found", Details = $"Certificate file not found: {currentConfig.CertPath}" }, statusCode: 400);
+                }
+
+                // Save config
+                try
+                {
+                    _configManager.SaveConfig(currentConfig);
+                    _logger.Info("[UI] Config updated via UI");
+                    return Results.Json(new { success = true, message = "Config updated. Please restart the Openctrol Agent service to apply changes." });
+                }
+                catch (InvalidOperationException ex)
+                {
+                    _logger.Warn($"[UI] Config validation failed: {ex.Message}");
+                    return Results.Json(new ErrorResponse { Error = "validation_failed", Details = ex.Message }, statusCode: 400);
+                }
+                catch (Exception ex)
+                {
+                    _logger.Error("[UI] Error saving config", ex);
+                    return Results.Json(new ErrorResponse { Error = "save_failed", Details = SanitizeErrorMessage(ex, "Failed to save config") }, statusCode: 500);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[UI] Error updating config", ex);
+                return Results.Json(new ErrorResponse { Error = "internal_error", Details = SanitizeErrorMessage(ex, "Failed to update config") }, statusCode: 500);
+            }
+        });
+
+        // POST /api/v1/ui/service/stop
+        _app.MapPost("/api/v1/ui/service/stop", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            return ControlService("stop");
+        });
+
+        // POST /api/v1/ui/service/start
+        _app.MapPost("/api/v1/ui/service/start", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            return ControlService("start");
+        });
+
+        // POST /api/v1/ui/service/restart
+        _app.MapPost("/api/v1/ui/service/restart", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            return ControlService("restart");
+        });
+
+        // POST /api/v1/ui/service/uninstall
+        _app.MapPost("/api/v1/ui/service/uninstall", (HttpContext context) =>
+        {
+            var localhostCheck = CheckLocalhostOnly(context);
+            if (localhostCheck != null)
+            {
+                return localhostCheck;
+            }
+
+            try
+            {
+                // Find uninstall script
+                var exePath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+                if (string.IsNullOrEmpty(exePath))
+                {
+                    exePath = AppContext.BaseDirectory;
+                }
+                
+                var exeDir = Path.GetDirectoryName(exePath);
+                if (string.IsNullOrEmpty(exeDir))
+                {
+                    exeDir = AppContext.BaseDirectory;
+                }
+
+                // Look for uninstall script in common locations
+                var possiblePaths = new[]
+                {
+                    Path.Combine(exeDir, "..", "setup", "uninstall.ps1"),
+                    Path.Combine(exeDir, "setup", "uninstall.ps1"),
+                    Path.Combine(Path.GetDirectoryName(exeDir) ?? "", "setup", "uninstall.ps1"),
+                    @"C:\Program Files\Openctrol\setup\uninstall.ps1"
+                };
+
+                string? uninstallScript = null;
+                foreach (var path in possiblePaths)
+                {
+                    var fullPath = Path.GetFullPath(path);
+                    if (File.Exists(fullPath))
+                    {
+                        uninstallScript = fullPath;
+                        break;
+                    }
+                }
+
+                if (string.IsNullOrEmpty(uninstallScript))
+                {
+                    return Results.Json(new ErrorResponse 
+                    { 
+                        Error = "script_not_found", 
+                        Details = "Uninstall script not found. Please run setup\\uninstall.ps1 manually." 
+                    }, statusCode: 400);
+                }
+
+                _logger.Warn($"[UI] Uninstall requested via UI. Executing: {uninstallScript}");
+
+                // Launch PowerShell to run uninstall script
+                var processStartInfo = new ProcessStartInfo
+                {
+                    FileName = "powershell.exe",
+                    Arguments = $"-ExecutionPolicy Bypass -File \"{uninstallScript}\" -RemoveProgramData:$false",
+                    UseShellExecute = false,
+                    CreateNoWindow = true,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true
+                };
+
+                var process = Process.Start(processStartInfo);
+                if (process == null)
+                {
+                    return Results.Json(new ErrorResponse { Error = "process_start_failed", Details = "Failed to start uninstall process" }, statusCode: 500);
+                }
+
+                // Don't wait - return immediately
+                return Results.Json(new 
+                { 
+                    success = true, 
+                    message = "Uninstall script invoked. The service will stop and remove itself.",
+                    statusCode = 202
+                }, statusCode: 202);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error("[UI] Error invoking uninstall", ex);
+                return Results.Json(new ErrorResponse { Error = "internal_error", Details = SanitizeErrorMessage(ex, "Failed to invoke uninstall") }, statusCode: 500);
+            }
+        });
+    }
+
+    /// <summary>
+    /// Gets the current Windows service status.
+    /// </summary>
+    private ServiceInfoDto GetServiceStatus()
+    {
+        try
+        {
+            var serviceName = "OpenctrolAgent";
+            using var service = new ServiceController(serviceName);
+            
+            return new ServiceInfoDto
+            {
+                ServiceName = serviceName,
+                IsServiceInstalled = true,
+                ServiceStatus = service.Status.ToString()
+            };
+        }
+        catch (InvalidOperationException)
+        {
+            // Service not found
+            return new ServiceInfoDto
+            {
+                ServiceName = "OpenctrolAgent",
+                IsServiceInstalled = false,
+                ServiceStatus = "NotInstalled"
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"[UI] Error getting service status: {ex.Message}");
+            return new ServiceInfoDto
+            {
+                ServiceName = "OpenctrolAgent",
+                IsServiceInstalled = false,
+                ServiceStatus = "Unknown"
+            };
+        }
+    }
+
+    /// <summary>
+    /// Controls the Windows service (start/stop/restart).
+    /// </summary>
+    private IResult ControlService(string action)
+    {
+        try
+        {
+            var serviceName = "OpenctrolAgent";
+            using var service = new ServiceController(serviceName);
+
+            switch (action.ToLower())
+            {
+                case "stop":
+                    if (service.Status == ServiceControllerStatus.Running)
+                    {
+                        service.Stop();
+                        service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+                        _logger.Info("[UI] Service stopped via UI");
+                        return Results.Json(new ServiceControlResponse
+                        {
+                            Success = true,
+                            Message = "Service stopped successfully",
+                            ServiceStatus = service.Status.ToString()
+                        });
+                    }
+                    return Results.Json(new ServiceControlResponse
+                    {
+                        Success = true,
+                        Message = "Service is already stopped",
+                        ServiceStatus = service.Status.ToString()
+                    });
+
+                case "start":
+                    if (service.Status == ServiceControllerStatus.Stopped)
+                    {
+                        service.Start();
+                        service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                        _logger.Info("[UI] Service started via UI");
+                        return Results.Json(new ServiceControlResponse
+                        {
+                            Success = true,
+                            Message = "Service started successfully",
+                            ServiceStatus = service.Status.ToString()
+                        });
+                    }
+                    return Results.Json(new ServiceControlResponse
+                    {
+                        Success = true,
+                        Message = "Service is already running",
+                        ServiceStatus = service.Status.ToString()
+                    });
+
+                case "restart":
+                    if (service.Status == ServiceControllerStatus.Running)
+                    {
+                        service.Stop();
+                        service.WaitForStatus(ServiceControllerStatus.Stopped, TimeSpan.FromSeconds(30));
+                    }
+                    service.Start();
+                    service.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                    _logger.Info("[UI] Service restarted via UI");
+                    return Results.Json(new ServiceControlResponse
+                    {
+                        Success = true,
+                        Message = "Service restarted successfully",
+                        ServiceStatus = service.Status.ToString()
+                    });
+
+                default:
+                    return Results.Json(new ServiceControlResponse
+                    {
+                        Success = false,
+                        Message = "Invalid action",
+                        Error = "invalid_action",
+                        Details = $"Unknown action: {action}"
+                    }, statusCode: 400);
+            }
+        }
+        catch (InvalidOperationException ex)
+        {
+            return Results.Json(new ServiceControlResponse
+            {
+                Success = false,
+                Message = "Service not found or not accessible",
+                Error = "service_not_found",
+                Details = ex.Message
+            }, statusCode: 404);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[UI] Error controlling service ({action})", ex);
+            return Results.Json(new ServiceControlResponse
+            {
+                Success = false,
+                Message = "Failed to control service",
+                Error = "service_control_failed",
+                Details = SanitizeErrorMessage(ex, "Service control operation failed")
+            }, statusCode: 500);
+        }
+    }
+
+    /// <summary>
+    /// Returns the HTML content for the UI dashboard.
+    /// </summary>
+    private static string GetUiHtml()
+    {
+        return @"<!DOCTYPE html>
+<html lang=""en"">
+<head>
+    <meta charset=""UTF-8"">
+    <meta name=""viewport"" content=""width=device-width, initial-scale=1.0"">
+    <title>Openctrol Agent - Control Panel</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            color: #333;
+            line-height: 1.6;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #2563eb;
+            margin-bottom: 10px;
+        }
+        .status-pill {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .status-running { background: #10b981; color: white; }
+        .status-stopped { background: #ef4444; color: white; }
+        .status-unknown { background: #6b7280; color: white; }
+        .section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .section h2 {
+            color: #1f2937;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 15px;
+        }
+        .info-item {
+            padding: 10px;
+            background: #f9fafb;
+            border-radius: 4px;
+        }
+        .info-label {
+            font-size: 12px;
+            color: #6b7280;
+            margin-bottom: 4px;
+        }
+        .info-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #1f2937;
+        }
+        .btn {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-right: 10px;
+            margin-bottom: 10px;
+        }
+        .btn-primary { background: #2563eb; color: white; }
+        .btn-primary:hover { background: #1d4ed8; }
+        .btn-danger { background: #ef4444; color: white; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-secondary { background: #6b7280; color: white; }
+        .btn-secondary:hover { background: #4b5563; }
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #374151;
+        }
+        input[type=""text""], input[type=""number""], textarea {
+            width: 100%;
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        input[type=""checkbox""] {
+            margin-right: 8px;
+        }
+        .error-banner {
+            background: #fee2e2;
+            color: #991b1b;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        .success-banner {
+            background: #d1fae5;
+            color: #065f46;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            display: none;
+        }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class=""container"">
+        <header>
+            <h1>Openctrol Agent</h1>
+            <div id=""statusPill"" class=""status-pill status-unknown"">Loading...</div>
+            <div style=""margin-top: 10px; color: #6b7280; font-size: 14px;"">
+                <span id=""version"">-</span> • Uptime: <span id=""uptime"">-</span>
+            </div>
+        </header>
+
+        <div class=""error-banner"" id=""errorBanner""></div>
+        <div class=""success-banner"" id=""successBanner""></div>
+
+        <div class=""section"">
+            <h2>Health & Connection</h2>
+            <div class=""info-grid"">
+                <div class=""info-item"">
+                    <div class=""info-label"">Desktop State</div>
+                    <div class=""info-value"" id=""desktopState"">-</div>
+                </div>
+                <div class=""info-item"">
+                    <div class=""info-label"">Status</div>
+                    <div class=""info-value"" id=""degradedStatus"">-</div>
+                </div>
+                <div class=""info-item"">
+                    <div class=""info-label"">Active Sessions</div>
+                    <div class=""info-value"" id=""activeSessions"">-</div>
+                </div>
+            </div>
+        </div>
+
+        <div class=""section"">
+            <h2>Integration & Config</h2>
+            <div class=""info-grid"">
+                <div class=""info-item"">
+                    <div class=""info-label"">Port</div>
+                    <div class=""info-value"" id=""configPort"">-</div>
+                </div>
+                <div class=""info-item"">
+                    <div class=""info-label"">HTTPS</div>
+                    <div class=""info-value"" id=""configHttps"">-</div>
+                </div>
+                <div class=""info-item"">
+                    <div class=""info-label"">API Key</div>
+                    <div class=""info-value"" id=""configApiKey"">-</div>
+                </div>
+                <div class=""info-item"">
+                    <div class=""info-label"">Allowed HA IDs</div>
+                    <div class=""info-value"" id=""configHaIds"">-</div>
+                </div>
+            </div>
+            <button class=""btn btn-secondary"" onclick=""toggleConfigForm()"">Edit Config</button>
+            <div id=""configForm"" class=""hidden"" style=""margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;"">
+                <form id=""configFormElement"" onsubmit=""saveConfig(event)"">
+                    <div class=""form-group"">
+                        <label>Port</label>
+                        <input type=""number"" id=""formPort"" min=""1"" max=""65535"" required>
+                    </div>
+                    <div class=""form-group"">
+                        <label>
+                            <input type=""checkbox"" id=""formUseHttps"">
+                            Use HTTPS
+                        </label>
+                    </div>
+                    <div class=""form-group"" id=""certPathGroup"">
+                        <label>Certificate Path</label>
+                        <input type=""text"" id=""formCertPath"" placeholder=""C:\\path\\to\\cert.pfx"">
+                    </div>
+                    <div class=""form-group"">
+                        <label>Allowed HA IDs (comma-separated)</label>
+                        <textarea id=""formHaIds"" rows=""3"" placeholder=""home-assistant-1, home-assistant-2""></textarea>
+                    </div>
+                    <div class=""form-group"">
+                        <label>New API Key (leave empty to keep current)</label>
+                        <input type=""text"" id=""formApiKey"" placeholder=""Leave empty to keep current key"">
+                    </div>
+                    <button type=""submit"" class=""btn btn-primary"">Save Config</button>
+                    <button type=""button"" class=""btn btn-secondary"" onclick=""toggleConfigForm()"">Cancel</button>
+                </form>
+            </div>
+        </div>
+
+        <div class=""section"">
+            <h2>Service Controls</h2>
+            <button class=""btn btn-secondary"" onclick=""controlService('start')"">Start</button>
+            <button class=""btn btn-secondary"" onclick=""controlService('stop')"">Stop</button>
+            <button class=""btn btn-secondary"" onclick=""controlService('restart')"">Restart</button>
+            <button class=""btn btn-danger"" onclick=""confirmUninstall()"">Uninstall</button>
+        </div>
+    </div>
+
+    <script src=""/ui/app.js""></script>
+</body>
+</html>";
+    }
+
+    /// <summary>
+    /// Returns the JavaScript content for the UI.
+    /// </summary>
+    private static string GetUiJavaScript()
+    {
+        return @"
+let statusData = null;
+let configData = null;
+
+async function loadStatus() {
+    try {
+        const response = await fetch('/api/v1/ui/status');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        statusData = await response.json();
+        updateUI();
+    } catch (error) {
+        showError('Failed to load status: ' + error.message);
+    }
+}
+
+async function loadConfig() {
+    try {
+        const response = await fetch('/api/v1/ui/config');
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+        configData = await response.json();
+        populateConfigForm();
+    } catch (error) {
+        showError('Failed to load config: ' + error.message);
+    }
+}
+
+function updateUI() {
+    if (!statusData) return;
+
+    // Status pill
+    const statusPill = document.getElementById('statusPill');
+    const serviceStatus = statusData.service.service_status;
+    statusPill.textContent = serviceStatus;
+    statusPill.className = 'status-pill status-' + serviceStatus.toLowerCase().replace(' ', '-');
+
+    // Version and uptime
+    document.getElementById('version').textContent = 'v' + statusData.agent.version;
+    const uptimeHours = Math.floor(statusData.agent.uptime_seconds / 3600);
+    const uptimeMins = Math.floor((statusData.agent.uptime_seconds % 3600) / 60);
+    document.getElementById('uptime').textContent = uptimeHours + 'h ' + uptimeMins + 'm';
+
+    // Health
+    document.getElementById('desktopState').textContent = statusData.health.desktop_state || 'unknown';
+    document.getElementById('degradedStatus').textContent = statusData.health.is_degraded ? 'Degraded' : 'OK';
+    document.getElementById('activeSessions').textContent = statusData.health.active_sessions;
+
+    // Config
+    document.getElementById('configPort').textContent = statusData.config.port;
+    document.getElementById('configHttps').textContent = statusData.config.use_https ? 'Yes' : 'No';
+    document.getElementById('configApiKey').textContent = statusData.config.api_key_configured ? 'Configured' : 'Not set';
+    document.getElementById('configHaIds').textContent = statusData.config.allowed_ha_ids.length > 0 
+        ? statusData.config.allowed_ha_ids.join(', ') 
+        : 'None (deny all)';
+}
+
+function populateConfigForm() {
+    if (!configData) return;
+    document.getElementById('formPort').value = configData.port;
+    document.getElementById('formUseHttps').checked = configData.use_https;
+    document.getElementById('formCertPath').value = configData.cert_path || '';
+    document.getElementById('formHaIds').value = configData.allowed_ha_ids.join(', ');
+    document.getElementById('formApiKey').value = '';
+    updateCertPathVisibility();
+}
+
+function updateCertPathVisibility() {
+    const useHttps = document.getElementById('formUseHttps').checked;
+    document.getElementById('certPathGroup').style.display = useHttps ? 'block' : 'none';
+}
+
+document.getElementById('formUseHttps').addEventListener('change', updateCertPathVisibility);
+
+function toggleConfigForm() {
+    const form = document.getElementById('configForm');
+    form.classList.toggle('hidden');
+    if (!form.classList.contains('hidden')) {
+        loadConfig();
+    }
+}
+
+async function saveConfig(event) {
+    event.preventDefault();
+    hideMessages();
+
+    const formData = {
+        port: parseInt(document.getElementById('formPort').value),
+        use_https: document.getElementById('formUseHttps').checked,
+        cert_path: document.getElementById('formCertPath').value,
+        allowed_ha_ids: document.getElementById('formHaIds').value.split(',').map(s => s.trim()).filter(s => s),
+        api_key: document.getElementById('formApiKey').value || null
+    };
+
+    try {
+        const response = await fetch('/api/v1/ui/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(formData)
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.details || result.error || 'Failed to save config');
+        }
+
+        showSuccess(result.message || 'Config saved. Please restart the service to apply changes.');
+        toggleConfigForm();
+        setTimeout(loadStatus, 1000);
+    } catch (error) {
+        showError('Failed to save config: ' + error.message);
+    }
+}
+
+async function controlService(action) {
+    hideMessages();
+    try {
+        const response = await fetch(`/api/v1/ui/service/${action}`, {
+            method: 'POST'
+        });
+
+        const result = await response.json();
+        if (!response.ok) {
+            throw new Error(result.details || result.error || `Failed to ${action} service`);
+        }
+
+        showSuccess(result.message || `Service ${action}ed successfully`);
+        setTimeout(loadStatus, 1000);
+    } catch (error) {
+        showError('Failed to control service: ' + error.message);
+    }
+}
+
+function confirmUninstall() {
+    if (!confirm('Are you sure? This will uninstall Openctrol Agent from this machine.')) {
+        return;
+    }
+    
+    if (!confirm('This action cannot be undone. Continue?')) {
+        return;
+    }
+
+    hideMessages();
+    fetch('/api/v1/ui/service/uninstall', {
+        method: 'POST'
+    })
+    .then(response => response.json())
+    .then(result => {
+        if (result.success) {
+            showSuccess(result.message || 'Uninstall initiated. The service will stop and remove itself.');
+        } else {
+            showError(result.details || result.error || 'Failed to initiate uninstall');
+        }
+    })
+    .catch(error => {
+        showError('Failed to initiate uninstall: ' + error.message);
+    });
+}
+
+function showError(message) {
+    const banner = document.getElementById('errorBanner');
+    banner.textContent = message;
+    banner.style.display = 'block';
+    setTimeout(hideMessages, 5000);
+}
+
+function showSuccess(message) {
+    const banner = document.getElementById('successBanner');
+    banner.textContent = message;
+    banner.style.display = 'block';
+    setTimeout(hideMessages, 5000);
+}
+
+function hideMessages() {
+    document.getElementById('errorBanner').style.display = 'none';
+    document.getElementById('successBanner').style.display = 'none';
+}
+
+// Load data on page load
+loadStatus();
+setInterval(loadStatus, 5000); // Refresh every 5 seconds
+";
     }
 }
 

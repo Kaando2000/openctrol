@@ -5,5 +5,6 @@ public interface IConfigManager
     AgentConfig GetConfig();
     void Reload();
     void ValidateConfig();
+    void SaveConfig(AgentConfig config);
 }
 
