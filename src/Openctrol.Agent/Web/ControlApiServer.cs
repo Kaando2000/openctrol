@@ -69,6 +69,9 @@ public sealed class ControlApiServer : IControlApiServer
             
             var builder = WebApplication.CreateBuilder();
 
+            // Disable default URLs - we'll configure Kestrel explicitly
+            builder.WebHost.UseUrls(); // Clear any default URLs
+            
             builder.WebHost.ConfigureKestrel(options =>
             {
                 // Configure HTTPS if certificate is available
@@ -701,10 +704,12 @@ public sealed class ControlApiServer : IControlApiServer
 
             // Wait for server to start binding (synchronous wait with timeout)
             // This helps catch immediate binding failures
-            var startTimeout = TimeSpan.FromSeconds(5);
+            var startTimeout = TimeSpan.FromSeconds(10);
             var startTime = DateTime.UtcNow;
             var portListening = false;
-            var bindingError = false;
+            var protocol = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "https" : "http";
+            
+            _logger.Info($"[API] Waiting for server to bind to {protocol}://localhost:{config.HttpPort}...");
             
             while (DateTime.UtcNow - startTime < startTimeout)
             {
@@ -712,7 +717,7 @@ public sealed class ControlApiServer : IControlApiServer
                 if (_runTask != null && _runTask.IsFaulted)
                 {
                     var ex = _runTask.Exception?.GetBaseException();
-                    var errorMsg = $"[API] Server failed to start on port {config.HttpPort}: {ex?.Message}";
+                    var errorMsg = $"[BOOT] [ERROR] HTTP API failed to start on port {config.HttpPort}: {ex?.Message}";
                     _logger.Error(errorMsg, ex);
                     try
                     {
@@ -724,12 +729,12 @@ public sealed class ControlApiServer : IControlApiServer
                     throw new InvalidOperationException($"Failed to start API server on port {config.HttpPort}", ex);
                 }
                 
-                // Check if port is listening
+                // Check if port is listening by trying to connect
                 try
                 {
                     using var client = new System.Net.Sockets.TcpClient();
                     var connectTask = client.ConnectAsync(IPAddress.Loopback, config.HttpPort);
-                    if (connectTask.Wait(TimeSpan.FromMilliseconds(100)))
+                    if (connectTask.Wait(TimeSpan.FromMilliseconds(500)))
                     {
                         if (client.Connected)
                         {
@@ -745,14 +750,14 @@ public sealed class ControlApiServer : IControlApiServer
                 }
                 
                 // Small delay before next check
-                System.Threading.Thread.Sleep(200);
+                System.Threading.Thread.Sleep(500);
             }
             
             // Final check for errors
             if (_runTask != null && _runTask.IsFaulted)
             {
                 var ex = _runTask.Exception?.GetBaseException();
-                var errorMsg = $"[API] Server failed to start on port {config.HttpPort}: {ex?.Message}";
+                var errorMsg = $"[BOOT] [ERROR] HTTP API failed to start on port {config.HttpPort}: {ex?.Message}";
                 _logger.Error(errorMsg, ex);
                 try
                 {
@@ -766,30 +771,28 @@ public sealed class ControlApiServer : IControlApiServer
             
             if (portListening)
             {
-                var protocol = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "https" : "http";
-                _logger.Info($"[BOOT] HTTP API server started successfully on {protocol}://localhost:{config.HttpPort}");
+                _logger.Info($"[BOOT] HTTP API server started successfully on {protocol}://localhost:{config.HttpPort} (UseHttps={protocol == "https"})");
                 _logger.Info($"[API] Health endpoint: {protocol}://localhost:{config.HttpPort}/api/v1/health");
                 _logger.Info($"[API] UI endpoint: {protocol}://localhost:{config.HttpPort}/ui");
                 try
                 {
                     System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
-                        $"[API] Server started successfully on port {config.HttpPort}\nHealth: {protocol}://localhost:{config.HttpPort}/api/v1/health\nUI: {protocol}://localhost:{config.HttpPort}/ui", 
+                        $"[BOOT] HTTP API server started successfully on {protocol}://localhost:{config.HttpPort}\nHealth: {protocol}://localhost:{config.HttpPort}/api/v1/health\nUI: {protocol}://localhost:{config.HttpPort}/ui", 
                         System.Diagnostics.EventLogEntryType.Information);
                 }
                 catch { }
             }
             else
             {
-                // Port not listening after timeout - this is a warning, not a fatal error
-                // The server might still be starting, or there might be a binding issue
-                var warnMsg = $"[API] Server task started but port {config.HttpPort} is not listening after {startTimeout.TotalSeconds}s timeout. This may indicate a binding issue.";
-                _logger.Warn(warnMsg);
+                // Port not listening after timeout - this is a fatal error
+                var errorMsg = $"[BOOT] [ERROR] HTTP API server task started but port {config.HttpPort} is not listening after {startTimeout.TotalSeconds}s timeout. This indicates a binding failure.";
+                _logger.Error(errorMsg);
                 try
                 {
-                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", warnMsg, System.Diagnostics.EventLogEntryType.Warning);
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", errorMsg, System.Diagnostics.EventLogEntryType.Error);
                 }
                 catch { }
-                // Don't throw - let the server continue, but log the warning
+                throw new InvalidOperationException($"API server failed to bind to port {config.HttpPort} within {startTimeout.TotalSeconds} seconds");
             }
         }
         catch (Exception ex)

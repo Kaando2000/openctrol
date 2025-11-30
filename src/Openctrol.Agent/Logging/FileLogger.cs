@@ -13,7 +13,7 @@ public sealed class FileLogger : ILogger
             _logDirectory = Path.Combine(programData, "Openctrol", "logs");
             Directory.CreateDirectory(_logDirectory);
         }
-        catch (Exception ex)
+        catch
         {
             // If we can't create the log directory, use a fallback location
             try
@@ -29,6 +29,8 @@ public sealed class FileLogger : ILogger
             }
         }
     }
+
+    public string GetLogDirectory() => _logDirectory;
 
     private string GetLogFilePath()
     {
@@ -71,17 +73,33 @@ public sealed class FileLogger : ILogger
                 var logDir = Path.GetDirectoryName(logFile);
                 if (!string.IsNullOrEmpty(logDir) && !Directory.Exists(logDir))
                 {
-                    Directory.CreateDirectory(logDir);
+                    try
+                    {
+                        Directory.CreateDirectory(logDir);
+                    }
+                    catch (Exception dirEx)
+                    {
+                        // Log directory creation failure to Event Log
+                        try
+                        {
+                            System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                                $"[FileLogger] Failed to create log directory {logDir}: {dirEx.Message}", 
+                                System.Diagnostics.EventLogEntryType.Warning);
+                        }
+                        catch { }
+                        throw; // Re-throw to be caught by outer catch
+                    }
                 }
                 
                 File.AppendAllText(logFile, logLine);
             }
-            catch (UnauthorizedAccessException)
+            catch (UnauthorizedAccessException ex)
             {
                 // Try to write to Event Log as fallback
                 try
                 {
-                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", $"[{level}] {message}", 
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        $"[FileLogger] UnauthorizedAccessException writing to log file: {ex.Message}\nOriginal message: [{level}] {message}", 
                         level == "ERROR" ? System.Diagnostics.EventLogEntryType.Error :
                         level == "WARN" ? System.Diagnostics.EventLogEntryType.Warning :
                         System.Diagnostics.EventLogEntryType.Information);
@@ -91,9 +109,19 @@ public sealed class FileLogger : ILogger
                     // If Event Log also fails, silently fail
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                // Silently fail if logging fails
+                // Log file write failure to Event Log
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                        $"[FileLogger] Failed to write log file: {ex.Message}\nOriginal message: [{level}] {message}", 
+                        System.Diagnostics.EventLogEntryType.Warning);
+                }
+                catch
+                {
+                    // If Event Log also fails, silently fail
+                }
             }
         }
     }

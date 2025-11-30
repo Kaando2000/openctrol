@@ -4,6 +4,7 @@ using ILogger = Openctrol.Agent.Logging.ILogger;
 using Openctrol.Agent.Web;
 using Openctrol.Agent.RemoteDesktop;
 using System.IO;
+using System.Diagnostics;
 
 namespace Openctrol.Agent.Hosting;
 
@@ -24,14 +25,41 @@ public sealed class AgentHost : BackgroundService, IUptimeService
         IControlApiServer? apiServer = null,
         IRemoteDesktopEngine? remoteDesktopEngine = null)
     {
+        // Log constructor call to verify service is being constructed
+        try
+        {
+            System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                "[BOOT] AgentHost constructor called", 
+                System.Diagnostics.EventLogEntryType.Information);
+        }
+        catch { }
+        
         _configManager = configManager;
         _logger = logger;
         _apiServer = apiServer;
         _remoteDesktopEngine = remoteDesktopEngine;
+        
+        // Log that constructor completed
+        try
+        {
+            System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                $"[BOOT] AgentHost constructor completed. API server: {(_apiServer != null ? "found" : "null")}", 
+                System.Diagnostics.EventLogEntryType.Information);
+        }
+        catch { }
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Log entry point - this confirms ExecuteAsync is being called
+        try
+        {
+            System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                "[BOOT] AgentHost.ExecuteAsync called - starting agent initialization", 
+                System.Diagnostics.EventLogEntryType.Information);
+        }
+        catch { }
+        
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
         _logger.Info($"[BOOT] Openctrol Agent starting, version={version}");
 
@@ -93,6 +121,8 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             // Start API server if available
             if (_apiServer != null)
             {
+                _logger.Info("[BOOT] API server instance found, calling Start()...");
+                
                 try
                 {
                     _logger.Info("[BOOT] Starting HTTP API server...");
@@ -108,11 +138,13 @@ public sealed class AgentHost : BackgroundService, IUptimeService
                     
                     _apiServer.Start();
                     
+                    _logger.Info("[BOOT] API server Start() method completed without exception");
+                    
                     // Success message is logged by ControlApiServer.Start()
                 }
                 catch (Exception ex)
                 {
-                    var errorMsg = $"[API] Failed to start API server - this is a fatal error: {ex.Message}";
+                    var errorMsg = $"[BOOT] [ERROR] Failed to start API server - this is a fatal error: {ex.Message}";
                     _logger.Error(errorMsg, ex);
                     
                     // Write directly to Event Log
@@ -129,12 +161,11 @@ public sealed class AgentHost : BackgroundService, IUptimeService
             }
             else
             {
-                _logger.Warn("[API] Server not available (stub)");
+                var warnMsg = "[BOOT] [WARN] API server instance is null - server will not start";
+                _logger.Warn(warnMsg);
                 try
                 {
-                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
-                        "[API] WARNING: Server not available (stub)", 
-                        System.Diagnostics.EventLogEntryType.Warning);
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", warnMsg, System.Diagnostics.EventLogEntryType.Warning);
                 }
                 catch { }
             }
@@ -149,8 +180,19 @@ public sealed class AgentHost : BackgroundService, IUptimeService
         }
         catch (Exception ex)
         {
-            _logger.Error("Fatal error in AgentHost", ex);
-            throw;
+            var errorMsg = $"[BOOT] [ERROR] Fatal error in AgentHost.ExecuteAsync: {ex.Message}";
+            _logger.Error(errorMsg, ex);
+            
+            // Write to Event Log
+            try
+            {
+                System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
+                    $"{errorMsg}\nType: {ex.GetType().Name}\nStack: {ex.StackTrace}", 
+                    System.Diagnostics.EventLogEntryType.Error);
+            }
+            catch { }
+            
+            throw; // Re-throw to fail the service
         }
     }
 
