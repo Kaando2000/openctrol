@@ -27,33 +27,50 @@ A Windows service that provides remote desktop control, audio management, and po
 
 ## Quick Start
 
-### Installation
+### Installation (Recommended)
 
-**⚠ PREREQUISITE: .NET 8.0 Runtime must be installed before running the MSI.**
+The **PowerShell installer** is the recommended and supported installation method. It's simple, reliable, and doesn't require additional tools.
 
-1. **Install .NET 8.0 Runtime** (if not already installed)
-   - Download from: https://dotnet.microsoft.com/download/dotnet/8.0
-   - Install either "Desktop Runtime" or "ASP.NET Core Runtime"
-   - Verify: `dotnet --list-runtimes` should show `Microsoft.NETCore.App 8.0.x`
+1. **Download and extract the release**
+   - Download the latest release ZIP from the [Releases](https://github.com/yourusername/openctrol/releases) page
+   - Extract the ZIP file to a folder (e.g., `C:\Openctrol`)
 
-2. **Download the installer**
-   - Download `OpenctrolAgentSetup.msi` from the [Releases](https://github.com/yourusername/openctrol/releases) page or the `dist/` folder
+2. **Run the installer**
+   - Open PowerShell as Administrator (Right-click → "Run as Administrator")
+   - Navigate to the extracted folder
+   - Run the installer:
+     ```powershell
+     powershell -ExecutionPolicy Bypass -File .\setup\install.ps1
+     ```
+   - The installer will:
+     - Copy binaries to `C:\Program Files\Openctrol`
+     - Create configuration at `C:\ProgramData\Openctrol\config.json`
+     - Install and start the Windows service
+     - Optionally create a firewall rule
 
-3. **Run the installer**
-   - Right-click `OpenctrolAgentSetup.msi` and select "Install"
-   - Follow the installation wizard:
-     - Configure the HTTP port (default: 44325)
-     - Optionally enable HTTPS and provide certificate details
-     - Set or generate an API key
-     - Optionally create a Windows Firewall rule
-   - The service will be installed and started automatically
+3. **Configure during installation** (optional parameters)
+   ```powershell
+   # Custom port and API key
+   .\setup\install.ps1 -Port 8080 -ApiKey "my-secret-key"
+   
+   # With HTTPS
+   .\setup\install.ps1 -UseHttps -CertPath "C:\certs\cert.pfx" -CertPassword "password"
+   
+   # Skip firewall rule
+   .\setup\install.ps1 -CreateFirewallRule:$false
+   ```
 
-**Note**: If installation fails with error 1723 or 1603, ensure .NET 8.0 Runtime is installed. See [docs/INSTALLER-TROUBLESHOOTING.md](docs/INSTALLER-TROUBLESHOOTING.md) for details.
-
-3. **Verify installation**
+4. **Verify installation**
    - Open a browser and navigate to: `http://localhost:44325/api/v1/health`
    - You should see a JSON response with agent status
    - Check Windows Services (`services.msc`) for "Openctrol Agent" service
+
+**Installation Locations:**
+- **Binaries**: `C:\Program Files\Openctrol`
+- **Configuration**: `C:\ProgramData\Openctrol\config.json`
+- **Logs**: `C:\ProgramData\Openctrol\logs\`
+- **Service**: `OpenctrolAgent` (Windows Service)
+
 
 ### Configuration
 
@@ -88,14 +105,16 @@ Configuration is stored at `C:\ProgramData\Openctrol\config.json`. The installer
 
 ### Uninstall
 
-1. Open "Apps & Features" (Windows Settings)
-2. Find "Openctrol Agent"
-3. Click "Uninstall"
-
-**Note**: By default, configuration and logs in `C:\ProgramData\Openctrol` are preserved. To delete them, use:
+**Using PowerShell (Recommended):**
 ```powershell
-msiexec /x OpenctrolAgentSetup.msi CONFIG_DELETEPROGRAMDATA=1
+# Uninstall (preserves configuration and logs)
+powershell -ExecutionPolicy Bypass -File .\setup\uninstall.ps1
+
+# Uninstall and remove configuration/logs
+powershell -ExecutionPolicy Bypass -File .\setup\uninstall.ps1 -RemoveProgramData
 ```
+
+**Note**: By default, configuration and logs in `C:\ProgramData\Openctrol` are preserved. Use `-RemoveProgramData` to delete them.
 
 ## API Documentation
 
@@ -127,7 +146,7 @@ curl http://localhost:44325/api/v1/audio/state \
 - **[API Documentation](docs/API.md)** - Complete REST API and WebSocket protocol reference
 - **[Architecture](docs/ARCHITECTURE.md)** - Internal architecture and design
 - **[Build Guide](docs/BUILD.md)** - Building the agent from source
-- **[Installer Guide](docs/INSTALLER.md)** - Building and using the MSI installer
+- **[Setup Guide](setup/README.md)** - Complete installation and setup instructions
 
 ## Development
 
@@ -135,7 +154,6 @@ curl http://localhost:44325/api/v1/audio/state \
 
 **Prerequisites:**
 - .NET 8 SDK
-- WiX Toolset v3.11+ (for building the installer)
 
 **Build the Agent:**
 ```powershell
@@ -149,17 +167,15 @@ cd src/Openctrol.Agent
 dotnet run
 ```
 
-**Build the Installer:**
-
-**Prerequisites:** WiX Toolset v3.11+ must be installed. See [docs/INSTALLER.md](docs/INSTALLER.md) for detailed build instructions.
+**Build the Agent for Distribution:**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\build-installer.ps1
+# Publish self-contained agent
+dotnet publish src\Openctrol.Agent\Openctrol.Agent.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false
 ```
 
-The installer will appear in the `dist/` folder as `OpenctrolAgentSetup.msi`.
+The published binaries will be in `src\Openctrol.Agent\bin\Release\net8.0-windows\win-x64\publish\`
 
-**Note:** If you encounter build errors, ensure WiX Toolset is installed. Download from: https://wixtoolset.org/
 
 ### Project Structure
 
@@ -169,19 +185,14 @@ openctrol/
 │   └── Openctrol.Agent/          # Main Windows service
 ├── tests/
 │   └── Openctrol.Agent.Tests/    # Unit tests
-├── installer/
-│   └── Openctrol.Agent.Setup/    # WiX installer project
-├── scripts/
-│   └── build-installer.ps1       # Build script
-├── tools/
-│   ├── install-service.ps1       # Manual service installation
-│   └── uninstall-service.ps1     # Manual service removal
+├── setup/
+│   ├── README.md                    # Setup guide and instructions
+│   ├── install.ps1                  # PowerShell installer
+│   └── uninstall.ps1                 # PowerShell uninstaller
 ├── docs/                          # Documentation
 │   ├── API.md                     # REST API and WebSocket documentation
 │   ├── ARCHITECTURE.md            # Internal architecture and design
 │   ├── BUILD.md                   # Building the agent from source
-│   └── INSTALLER.md               # Building and using the MSI installer
-└── dist/                          # Built installer artifacts
 ```
 
 ## Security

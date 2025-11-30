@@ -35,11 +35,10 @@ openctrol/
 │   └── Openctrol.Agent/          # Main service project
 ├── tests/
 │   └── Openctrol.Agent.Tests/    # Unit tests
-├── installer/
-│   └── Openctrol.Agent.Setup/    # WiX installer project
-├── scripts/
-│   └── build-installer.ps1       # Build script for MSI
-├── tools/                         # Service installation scripts
+├── setup/
+│   ├── README.md                 # Setup guide
+│   ├── install.ps1               # PowerShell installer
+│   └── uninstall.ps1              # PowerShell uninstaller
 └── docs/                          # Documentation
 ```
 
@@ -72,11 +71,11 @@ The service will start and listen on the configured port (default: 44325).
 
 ## Installing as Windows Service
 
-See `tools/install-service.ps1` for service installation instructions.
+See the [Setup Guide](../setup/README.md) for complete installation instructions.
 
 ```powershell
 # Run as Administrator
-.\tools\install-service.ps1
+powershell -ExecutionPolicy Bypass -File .\setup\install.ps1
 ```
 
 ## Troubleshooting

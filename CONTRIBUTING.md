@@ -12,7 +12,6 @@ Thank you for your interest in contributing to Openctrol Agent!
 
 2. **Install prerequisites:**
    - .NET 8 SDK (download from https://dotnet.microsoft.com/download)
-   - WiX Toolset v3.11+ (for building installer, optional for agent development)
    - Windows 10/11 or Windows Server 2016+
 
 3. **Build the solution:**

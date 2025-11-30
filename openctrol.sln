@@ -11,12 +11,6 @@ Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Openctrol.Agent.Tests", "tests\Openctrol.Agent.Tests\Openctrol.Agent.Tests.csproj", "{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}"
 EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "installer", "installer", "{E1F2A3B4-C5D6-4E7F-8A9B-0C1D2E3F4A5B}"
-EndProject
-Project("{930C7802-8A8C-48F9-8165-68863BCCD9DD}") = "Openctrol.Agent.Setup", "installer\Openctrol.Agent.Setup\Openctrol.Agent.Setup.wixproj", "{F2A3B4C5-D6E7-4F8A-9B0C-1D2E3F4A5B6C}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CustomActions", "installer\Openctrol.Agent.Setup\CustomActions\CustomActions.csproj", "{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D}"
-EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,13 +45,6 @@ Global
 		{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}.Release|x64.Build.0 = Release|Any CPU
 		{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}.Release|x86.ActiveCfg = Release|Any CPU
 		{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}.Release|x86.Build.0 = Release|Any CPU
-		{F2A3B4C5-D6E7-4F8A-9B0C-1D2E3F4A5B6C}.Release|Any CPU.ActiveCfg = Release|x64
-		{F2A3B4C5-D6E7-4F8A-9B0C-1D2E3F4A5B6C}.Release|x64.ActiveCfg = Release|x64
-		{F2A3B4C5-D6E7-4F8A-9B0C-1D2E3F4A5B6C}.Release|x64.Build.0 = Release|x64
-		{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D}.Release|Any CPU.Build.0 = Release|Any CPU
-		{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D}.Release|x64.ActiveCfg = Release|Any CPU
-		{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D}.Release|x64.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
@@ -65,7 +52,5 @@ Global
 	GlobalSection(NestedProjects) = preSolution
 		{258BCF80-3F26-42FB-B988-C2AB589183EE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
 		{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
-		{F2A3B4C5-D6E7-4F8A-9B0C-1D2E3F4A5B6C} = {E1F2A3B4-C5D6-4E7F-8A9B-0C1D2E3F4A5B}
-		{A3B4C5D6-E7F8-4A9B-0C1D-2E3F4A5B6C7D} = {E1F2A3B4-C5D6-4E7F-8A9B-0C1D2E3F4A5B}
 	EndGlobalSection
 EndGlobal
