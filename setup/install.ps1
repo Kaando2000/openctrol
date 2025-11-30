@@ -77,6 +77,32 @@ function Test-Administrator {
     return $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Generate random bytes (compatible with PowerShell 5.x / .NET Framework)
+function New-RandomBytes {
+    param(
+        [int]$Length
+    )
+    
+    $rng = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    try {
+        $bytes = New-Object byte[] $Length
+        $rng.GetBytes($bytes)
+        return $bytes
+    }
+    finally {
+        if ($rng) {
+            $rng.Dispose()
+        }
+    }
+}
+
+# Generate a random API key (compatible with PowerShell 5.x / .NET Framework)
+function New-RandomApiKey {
+    $bytes = New-RandomBytes -Length 32
+    $base64 = [Convert]::ToBase64String($bytes)
+    return $base64 -replace '\+', '-' -replace '/', '_' -replace '=', ''
+}
+
 if (-not (Test-Administrator)) {
     Write-Error "This script requires Administrator privileges. Please run PowerShell as Administrator."
     Write-Host "Right-click PowerShell and select 'Run as Administrator', then run this script again." -ForegroundColor Yellow
@@ -215,9 +241,7 @@ if (Test-Path $configFile) {
     
     # Generate API key if not provided
     if ([string]::IsNullOrEmpty($ApiKey)) {
-        $bytes = New-Object byte[] 32
-        [System.Security.Cryptography.RandomNumberGenerator]::Fill($bytes)
-        $ApiKey = [Convert]::ToBase64String($bytes) -replace '\+', '-' -replace '/', '_' -replace '=', ''
+        $ApiKey = New-RandomApiKey
         Write-Host "  Generated API key" -ForegroundColor Gray
     }
     
