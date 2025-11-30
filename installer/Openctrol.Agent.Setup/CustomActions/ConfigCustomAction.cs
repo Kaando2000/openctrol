@@ -19,36 +19,95 @@ namespace Openctrol.Agent.Setup.CustomActions
         {
             try
             {
-                session.Log("Begin ConfigCustomAction.CreateConfigFile");
+                session.Log("=== Begin ConfigCustomAction.CreateConfigFile ===");
+
+                // Validate session
+                if (session == null)
+                {
+                    Console.Error.WriteLine("ERROR: Session is null");
+                    return ActionResult.Failure;
+                }
 
                 // Parse custom action data
+                session.Log("Reading custom action data from session...");
                 var data = session.CustomActionData;
-                var installFolder = data["INSTALLFOLDER"];
-                var port = data["PORT"];
-                var useHttps = data["USEHTTPS"] == "1";
+                if (data == null)
+                {
+                    session.Log("ERROR: CustomActionData is null");
+                    return ActionResult.Failure;
+                }
+
+                session.Log($"CustomActionData keys: {string.Join(", ", data.Keys)}");
+
+                var installFolder = data["INSTALLFOLDER"] ?? "";
+                var portStr = data["PORT"] ?? "";
+                var useHttpsStr = data["USEHTTPS"] ?? "";
                 var certPath = data["CERTPATH"] ?? "";
                 var certPassword = data["CERTPASSWORD"] ?? "";
                 var apiKey = data["APIKEY"] ?? "";
                 var agentId = data["AGENTID"] ?? "";
 
-                session.Log($"Install folder: {installFolder}");
-                session.Log($"Port: {port}");
-                session.Log($"Use HTTPS: {useHttps}");
+                session.Log($"Install folder: {(string.IsNullOrEmpty(installFolder) ? "(empty)" : installFolder)}");
+                session.Log($"Port: {(string.IsNullOrEmpty(portStr) ? "(empty)" : portStr)}");
+                session.Log($"Use HTTPS: {useHttpsStr}");
+                session.Log($"Cert path: {(string.IsNullOrEmpty(certPath) ? "(not provided)" : certPath)}");
                 session.Log($"API Key provided: {!string.IsNullOrEmpty(apiKey)}");
                 session.Log($"Agent ID provided: {!string.IsNullOrEmpty(agentId)}");
+
+                // Validate and parse port
+                if (string.IsNullOrEmpty(portStr))
+                {
+                    session.Log("ERROR: PORT property is missing or empty");
+                    return ActionResult.Failure;
+                }
+
+                if (!int.TryParse(portStr, out int port) || port <= 0 || port > 65535)
+                {
+                    session.Log($"ERROR: Invalid PORT value: '{portStr}'. Must be a number between 1 and 65535");
+                    return ActionResult.Failure;
+                }
+
+                session.Log($"Parsed port: {port}");
+
+                // Parse UseHttps
+                var useHttps = useHttpsStr == "1";
+                session.Log($"Use HTTPS: {useHttps}");
+
+                // Validate HTTPS configuration if enabled
+                if (useHttps)
+                {
+                    if (string.IsNullOrEmpty(certPath))
+                    {
+                        session.Log("ERROR: HTTPS is enabled but CERTPATH is not provided");
+                        return ActionResult.Failure;
+                    }
+
+                    if (!File.Exists(certPath))
+                    {
+                        session.Log($"ERROR: Certificate file not found: {certPath}");
+                        return ActionResult.Failure;
+                    }
+
+                    if (string.IsNullOrEmpty(certPassword))
+                    {
+                        session.Log("WARNING: HTTPS is enabled but certificate password is not provided");
+                    }
+                }
 
                 // Generate API key if not provided
                 if (string.IsNullOrEmpty(apiKey))
                 {
+                    session.Log("API key not provided, generating new one...");
                     apiKey = GenerateRandomApiKey();
-                    session.Log("Generated new API key");
+                    session.Log("API key generated successfully");
                 }
 
                 // Generate Agent ID if not provided
                 if (string.IsNullOrEmpty(agentId))
                 {
+                    session.Log("Agent ID not provided, generating new one...");
                     agentId = Guid.NewGuid().ToString();
-                    session.Log("Generated new Agent ID");
+                    session.Log($"Agent ID generated: {agentId}");
                 }
 
                 // Encrypt certificate password if provided
@@ -57,20 +116,32 @@ namespace Openctrol.Agent.Setup.CustomActions
                 {
                     try
                     {
+                        session.Log("Encrypting certificate password with DPAPI...");
                         certPasswordEncrypted = EncryptWithDPAPI(certPassword);
-                        session.Log("Certificate password encrypted");
+                        session.Log("Certificate password encrypted successfully");
                     }
                     catch (Exception ex)
                     {
-                        session.Log($"Error encrypting certificate password: {ex.Message}");
+                        session.Log($"ERROR: Failed to encrypt certificate password: {ex.GetType().Name}: {ex.Message}");
+                        session.Log($"Stack trace: {ex.StackTrace}");
                         return ActionResult.Failure;
                     }
                 }
 
-                // ProgramData path
+                // Resolve ProgramData path
+                session.Log("Resolving ProgramData path...");
                 var programData = Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData);
+                if (string.IsNullOrEmpty(programData))
+                {
+                    session.Log("ERROR: Could not resolve ProgramData folder path");
+                    return ActionResult.Failure;
+                }
+
                 var configDir = Path.Combine(programData, "Openctrol");
                 var configPath = Path.Combine(configDir, "config.json");
+
+                session.Log($"Config directory: {configDir}");
+                session.Log($"Config file path: {configPath}");
 
                 // Check if config already exists
                 if (File.Exists(configPath))
@@ -80,6 +151,7 @@ namespace Openctrol.Agent.Setup.CustomActions
                     // Read actual values from existing config file
                     try
                     {
+                        session.Log("Reading existing config file...");
                         var existingConfigJson = File.ReadAllText(configPath, Encoding.UTF8);
                         var existingConfig = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(existingConfigJson);
                         
@@ -99,23 +171,51 @@ namespace Openctrol.Agent.Setup.CustomActions
                     }
                     catch (Exception ex)
                     {
-                        session.Log($"Warning: Could not read existing config file: {ex.Message}. Summary may show incorrect values.");
+                        session.Log($"WARNING: Could not read existing config file: {ex.GetType().Name}: {ex.Message}");
+                        session.Log($"Stack trace: {ex.StackTrace}");
                         // Fallback to generated values if we can't read the file
                         session["CONFIG_APIKEY_GENERATED"] = apiKey;
                         session["CONFIG_AGENTID_GENERATED"] = agentId;
                     }
                     
+                    session.Log("=== ConfigCustomAction.CreateConfigFile completed (existing file) ===");
                     return ActionResult.Success;
                 }
 
                 // Create directory if it doesn't exist
-                Directory.CreateDirectory(configDir);
+                session.Log($"Creating config directory: {configDir}");
+                try
+                {
+                    if (!Directory.Exists(configDir))
+                    {
+                        Directory.CreateDirectory(configDir);
+                        session.Log("Config directory created successfully");
+                    }
+                    else
+                    {
+                        session.Log("Config directory already exists");
+                    }
+
+                    // Verify directory was created
+                    if (!Directory.Exists(configDir))
+                    {
+                        session.Log($"ERROR: Failed to create config directory: {configDir}");
+                        return ActionResult.Failure;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    session.Log($"ERROR: Failed to create config directory: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    return ActionResult.Failure;
+                }
 
                 // Create config object matching AgentConfig structure
+                session.Log("Creating config object...");
                 var config = new Dictionary<string, object>
                 {
                     { "AgentId", agentId },
-                    { "HttpPort", int.Parse(port) },
+                    { "HttpPort", port },
                     { "MaxSessions", 1 },
                     { "CertPath", certPath },
                     { "CertPasswordEncrypted", certPasswordEncrypted },
@@ -125,16 +225,62 @@ namespace Openctrol.Agent.Setup.CustomActions
                 };
 
                 // Serialize to JSON
-                var json = JsonSerializer.Serialize(config, new JsonSerializerOptions 
-                { 
-                    WriteIndented = true 
-                });
+                session.Log("Serializing config to JSON...");
+                string json;
+                try
+                {
+                    json = JsonSerializer.Serialize(config, new JsonSerializerOptions 
+                    { 
+                        WriteIndented = true 
+                    });
+                    session.Log("Config serialized successfully");
+                }
+                catch (Exception ex)
+                {
+                    session.Log($"ERROR: Failed to serialize config to JSON: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    return ActionResult.Failure;
+                }
 
                 // Write config file
-                File.WriteAllText(configPath, json, Encoding.UTF8);
+                session.Log($"Writing config file to: {configPath}");
+                try
+                {
+                    File.WriteAllText(configPath, json, Encoding.UTF8);
+                    session.Log("Config file written successfully");
+
+                    // Verify file was created
+                    if (!File.Exists(configPath))
+                    {
+                        session.Log($"ERROR: Config file was not created at: {configPath}");
+                        return ActionResult.Failure;
+                    }
+
+                    var fileInfo = new FileInfo(configPath);
+                    session.Log($"Config file size: {fileInfo.Length} bytes");
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    session.Log($"ERROR: UnauthorizedAccessException writing config file: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    return ActionResult.Failure;
+                }
+                catch (DirectoryNotFoundException ex)
+                {
+                    session.Log($"ERROR: DirectoryNotFoundException writing config file: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    return ActionResult.Failure;
+                }
+                catch (Exception ex)
+                {
+                    session.Log($"ERROR: Exception writing config file: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    return ActionResult.Failure;
+                }
 
                 // Set restrictive permissions (Administrators and SYSTEM only)
                 // This is important for security as the config contains API keys and encrypted passwords
+                session.Log("Setting config file permissions...");
                 try
                 {
                     var fileInfo = new FileInfo(configPath);
@@ -175,31 +321,57 @@ namespace Openctrol.Agent.Setup.CustomActions
                         System.Security.AccessControl.AccessControlType.Allow));
                     
                     fileInfo.SetAccessControl(fileSecurity);
-                    session.Log("Config file permissions set (Administrators and SYSTEM only)");
+                    session.Log("Config file permissions set successfully (Administrators and SYSTEM only)");
                 }
                 catch (UnauthorizedAccessException ex)
                 {
-                    session.Log($"Warning: Insufficient privileges to set config file permissions: {ex.Message}");
+                    session.Log($"WARNING: Insufficient privileges to set config file permissions: {ex.Message}");
                     session.Log("Config file created but with default permissions. Consider setting permissions manually for security.");
                     // Continue - permissions are a hardening measure, not critical for installation
                 }
                 catch (Exception ex)
                 {
-                    session.Log($"Warning: Could not set config file permissions: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"WARNING: Could not set config file permissions: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
                     session.Log("Config file created but with default permissions. Consider setting permissions manually for security.");
                     // Continue - permissions are a hardening measure, not critical for installation
                 }
 
                 // Store generated values for summary dialog
-                session["CONFIG_APIKEY_GENERATED"] = apiKey;
-                session["CONFIG_AGENTID_GENERATED"] = agentId;
+                session.Log("Storing generated values for summary dialog...");
+                try
+                {
+                    session["CONFIG_APIKEY_GENERATED"] = apiKey;
+                    session["CONFIG_AGENTID_GENERATED"] = agentId;
+                    session.Log("Values stored successfully");
+                }
+                catch (Exception ex)
+                {
+                    session.Log($"WARNING: Could not store values for summary dialog: {ex.GetType().Name}: {ex.Message}");
+                    // Continue - this is not critical for installation
+                }
 
-                session.Log("Config file created successfully");
+                session.Log("=== ConfigCustomAction.CreateConfigFile completed successfully ===");
                 return ActionResult.Success;
             }
             catch (Exception ex)
             {
-                session.Log($"Error in ConfigCustomAction: {ex}");
+                // Log detailed error information
+                if (session != null)
+                {
+                    session.Log($"ERROR: Exception in ConfigCustomAction.CreateConfigFile: {ex.GetType().Name}: {ex.Message}");
+                    session.Log($"Stack trace: {ex.StackTrace}");
+                    if (ex.InnerException != null)
+                    {
+                        session.Log($"Inner exception: {ex.InnerException.GetType().Name}: {ex.InnerException.Message}");
+                        session.Log($"Inner stack trace: {ex.InnerException.StackTrace}");
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine($"ERROR: Exception in ConfigCustomAction.CreateConfigFile (session is null): {ex.GetType().Name}: {ex.Message}");
+                    Console.Error.WriteLine($"Stack trace: {ex.StackTrace}");
+                }
                 return ActionResult.Failure;
             }
         }

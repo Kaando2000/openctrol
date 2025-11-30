@@ -23,6 +23,9 @@
              InstallScope="perMachine"
              Description="Openctrol Windows Agent Installer"
              Comments="Installs Openctrol Agent as a Windows Service" />
+    
+    <!-- Note: Custom actions require .NET 8.0 Runtime on target machine -->
+    <!-- Windows Installer will fail with error 1723 if .NET 8 runtime is not installed -->
 
     <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
     <MediaTemplate EmbedCab="yes" />
@@ -131,51 +134,51 @@
                       Wait="yes" />
     </Component>
 
-    <!-- Custom Actions -->
+    <!-- Custom Actions (EXE format - self-contained, no .NET runtime needed) -->
     <CustomAction Id="ConfigCustomAction"
+                  ExeCommand="CreateConfigFile"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="CreateConfigFile"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
     
     <CustomAction Id="ServiceCustomAction"
+                  ExeCommand="InstallService"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="InstallService"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
     
     <CustomAction Id="FirewallCustomAction"
+                  ExeCommand="CreateFirewallRule"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="CreateFirewallRule"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
     
     <CustomAction Id="UninstallFirewallCustomAction"
+                  ExeCommand="RemoveFirewallRule"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="RemoveFirewallRule"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
     
     <CustomAction Id="UninstallProgramDataCustomAction"
+                  ExeCommand="DeleteProgramData"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="DeleteProgramData"
                   Execute="deferred"
                   Impersonate="no"
                   Return="check" />
     
     <CustomAction Id="ValidateConfig"
+                  ExeCommand="ValidateConfig"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="ValidateConfig"
                   Execute="immediate"
                   Return="check" />
     
     <CustomAction Id="GenerateApiKey"
+                  ExeCommand="GenerateApiKey"
                   BinaryKey="CustomActionsBinary"
-                  DllEntry="GenerateApiKey"
                   Execute="immediate"
                   Return="check" />
 

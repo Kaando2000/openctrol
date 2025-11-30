@@ -42,27 +42,30 @@ finally {
 Write-Host "`n[2/4] Building Custom Actions..." -ForegroundColor Yellow
 $customActionsProject = Join-Path $installerDir "CustomActions\CustomActions.csproj"
 
-Push-Location (Split-Path $customActionsProject)
-try {
-    # Build for x64 platform to match MSI architecture
-    dotnet build -c $Configuration -p:PlatformTarget=x64
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "Custom actions build failed"
-        exit 1
-    }
-    
-    # Verify DLL was created
-    $dllPath = Join-Path (Split-Path $customActionsProject) "bin\$Configuration\net8.0-windows\CustomActions.dll"
-    if (-not (Test-Path $dllPath)) {
-        Write-Error "CustomActions.dll not found after build at: $dllPath"
-        exit 1
-    }
-    
-    Write-Host "Custom actions built successfully" -ForegroundColor Green
-}
-finally {
-    Pop-Location
-}
+        Push-Location (Split-Path $customActionsProject)
+        try {
+            # Build self-contained EXE for x64 platform to match MSI architecture
+            # Self-contained means no .NET runtime needed on target machine
+            Write-Host "  Building self-contained EXE custom actions..." -ForegroundColor Gray
+            dotnet publish -c $Configuration -p:PlatformTarget=x64 -p:SelfContained=true -p:RuntimeIdentifier=win-x64 -p:PublishSingleFile=true
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Custom actions build failed"
+                exit 1
+            }
+            
+            # Verify EXE was created (publish puts it in publish folder)
+            $exePath = Join-Path (Split-Path $customActionsProject) "bin\$Configuration\net8.0-windows\win-x64\publish\CustomActions.exe"
+            if (-not (Test-Path $exePath)) {
+                Write-Error "CustomActions.exe not found after build at: $exePath"
+                exit 1
+            }
+            
+            Write-Host "Custom actions built successfully (self-contained EXE)" -ForegroundColor Green
+            Write-Host "  No .NET 8 Runtime required on target machine!" -ForegroundColor Green
+        }
+        finally {
+            Pop-Location
+        }
 
 # Step 3: Harvest files using heat.exe
 Write-Host "`n[3/4] Harvesting files with heat.exe..." -ForegroundColor Yellow
@@ -137,17 +140,30 @@ try {
             $wixobjFile = $wxsFile -replace '\.wxs$', '.wixobj'
             $wixobjPath = Join-Path $installerDir $wixobjFile
             
-            $customActionsDll = Join-Path $projectRoot "installer\Openctrol.Agent.Setup\CustomActions\bin\Release\net8.0-windows\CustomActions.dll"
+            # Self-contained EXE build location (publish folder)
+            $customActionsExe = Join-Path $projectRoot "installer\Openctrol.Agent.Setup\CustomActions\bin\Release\net8.0-windows\win-x64\publish\CustomActions.exe"
             
-            # Verify DLL exists
-            if (-not (Test-Path $customActionsDll)) {
-                Write-Error "CustomActions.dll not found at: $customActionsDll"
-                Write-Error "Please build CustomActions project first: dotnet build installer\Openctrol.Agent.Setup\CustomActions\CustomActions.csproj -c Release"
+            # Verify EXE exists
+            if (-not (Test-Path $customActionsExe)) {
+                Write-Error "CustomActions.exe not found at: $customActionsExe"
+                Write-Error "Please build CustomActions project first: dotnet publish installer\Openctrol.Agent.Setup\CustomActions\CustomActions.csproj -c Release"
                 exit 1
             }
             
             # Use absolute path for WiX variable (required for WiX)
-            $customActionsDllAbsolute = (Resolve-Path $customActionsDll).Path
+            $customActionsExeAbsolute = (Resolve-Path $customActionsExe).Path
+            
+            # Verify EXE exists before building
+            if (-not (Test-Path $customActionsExeAbsolute)) {
+                Write-Error "CustomActions.exe not found at: $customActionsExeAbsolute"
+                exit 1
+            }
+            
+            Write-Host "  Using CustomActions EXE (self-contained): $customActionsExeAbsolute" -ForegroundColor Gray
+            
+            # WiX requires forward slashes or escaped backslashes in paths
+            # Use forward slashes for better compatibility
+            $customActionsExeForWix = $customActionsExeAbsolute -replace '\\', '/'
             $publishDirNormalized = $publishDir.TrimEnd('\') + '\'
             
             $candleArgs = @(
@@ -155,7 +171,7 @@ try {
                 "-arch", $Platform,
                 "-ext", "WixUtilExtension",
                 "-dAgentPublishDir=$publishDirNormalized",
-                "-dCustomActions.TargetPath=$customActionsDllAbsolute",
+                "-dCustomActions.TargetPath=$customActionsExeForWix",
                 "-out", $wixobjPath,
                 $wxsPath
             )

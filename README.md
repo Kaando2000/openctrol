@@ -29,10 +29,17 @@ A Windows service that provides remote desktop control, audio management, and po
 
 ### Installation
 
-1. **Download the installer**
+**⚠ PREREQUISITE: .NET 8.0 Runtime must be installed before running the MSI.**
+
+1. **Install .NET 8.0 Runtime** (if not already installed)
+   - Download from: https://dotnet.microsoft.com/download/dotnet/8.0
+   - Install either "Desktop Runtime" or "ASP.NET Core Runtime"
+   - Verify: `dotnet --list-runtimes` should show `Microsoft.NETCore.App 8.0.x`
+
+2. **Download the installer**
    - Download `OpenctrolAgentSetup.msi` from the [Releases](https://github.com/yourusername/openctrol/releases) page or the `dist/` folder
 
-2. **Run the installer**
+3. **Run the installer**
    - Right-click `OpenctrolAgentSetup.msi` and select "Install"
    - Follow the installation wizard:
      - Configure the HTTP port (default: 44325)
@@ -40,6 +47,8 @@ A Windows service that provides remote desktop control, audio management, and po
      - Set or generate an API key
      - Optionally create a Windows Firewall rule
    - The service will be installed and started automatically
+
+**Note**: If installation fails with error 1723 or 1603, ensure .NET 8.0 Runtime is installed. See [docs/INSTALLER-TROUBLESHOOTING.md](docs/INSTALLER-TROUBLESHOOTING.md) for details.
 
 3. **Verify installation**
    - Open a browser and navigate to: `http://localhost:44325/api/v1/health`

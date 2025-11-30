@@ -1,6 +1,8 @@
 using System;
 using System.IO;
 using System.Diagnostics;
+using System.ServiceProcess;
+using System.Threading;
 using Microsoft.Deployment.WindowsInstaller;
 
 namespace Openctrol.Agent.Setup.CustomActions
@@ -31,13 +33,13 @@ namespace Openctrol.Agent.Setup.CustomActions
                 // ServiceInstall happens in InstallServices, but registration may take a moment
                 var maxRetries = 10;
                 var retryDelay = 500; // milliseconds
-                System.ServiceProcess.ServiceController sc = null;
+                ServiceController sc = null;
                 
                 for (int i = 0; i < maxRetries; i++)
                 {
                     try
                     {
-                        sc = new System.ServiceProcess.ServiceController(serviceName);
+                        sc = new ServiceController(serviceName);
                         // If we can get the service controller, the service is registered
                         break;
                     }
@@ -46,7 +48,7 @@ namespace Openctrol.Agent.Setup.CustomActions
                         // Service not found yet, wait and retry
                         if (i < maxRetries - 1)
                         {
-                            System.Threading.Thread.Sleep(retryDelay);
+                            Thread.Sleep(retryDelay);
                         }
                         else
                         {
@@ -64,13 +66,13 @@ namespace Openctrol.Agent.Setup.CustomActions
                         using (sc)
                         {
                             var status = sc.Status;
-                            if (status != System.ServiceProcess.ServiceControllerStatus.Running)
+                            if (status != ServiceControllerStatus.Running)
                             {
                                 session.Log($"Starting service (current status: {status})...");
                                 sc.Start();
                                 
                                 // Wait for service to start, with timeout
-                                sc.WaitForStatus(System.ServiceProcess.ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
+                                sc.WaitForStatus(ServiceControllerStatus.Running, TimeSpan.FromSeconds(30));
                                 
                                 session.Log("Service started successfully");
                             }
@@ -80,7 +82,7 @@ namespace Openctrol.Agent.Setup.CustomActions
                             }
                         }
                     }
-                    catch (System.ServiceProcess.TimeoutException ex)
+                    catch (System.TimeoutException ex)
                     {
                         session.Log($"Warning: Service start timed out after 30 seconds: {ex.Message}");
                         session.Log("The service may need to be started manually. Check Windows Event Log for errors.");
