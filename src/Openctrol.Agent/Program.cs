@@ -140,21 +140,18 @@ public static class Program
             catch { }
             
             // Start the host - this will start all IHostedService instances
-            // Use RunAsync() which internally calls StartAsync and waits for shutdown
             try
             {
-                host.RunAsync().GetAwaiter().GetResult();
+                earlyLogger?.Info("[BOOT] Calling host.RunAsync()...");
+                var runTask = host.RunAsync();
+                earlyLogger?.Info("[BOOT] host.RunAsync() returned Task; awaiting completion...");
+                runTask.GetAwaiter().GetResult();
+                earlyLogger?.Info("[BOOT] host.RunAsync() completed normally. Host stopped.");
             }
-            catch (Exception runEx)
+            catch (Exception ex)
             {
-                try
-                {
-                    earlyLogger?.Error($"[BOOT] host.RunAsync() threw exception: {runEx.Message}", runEx);
-                    EventLog.WriteEntry("OpenctrolAgent", 
-                        $"[BOOT] Fatal: host.RunAsync() exception: {runEx.Message}\nType: {runEx.GetType().Name}\nStack: {runEx.StackTrace}", 
-                        EventLogEntryType.Error);
-                }
-                catch { }
+                // Use the same logging style / overloads as the existing global catch.
+                earlyLogger?.Error("[BOOT] host.RunAsync() threw a fatal exception.", ex);
                 throw;
             }
         }
