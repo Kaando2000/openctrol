@@ -32,7 +32,7 @@ public sealed class ControlApiServer : IControlApiServer
     private readonly IRemoteDesktopEngine? _remoteDesktopEngine;
     private readonly IPowerManager? _powerManager;
     private readonly IAudioManager? _audioManager;
-    private readonly IUptimeService? _uptimeService;
+    private readonly IUptimeService _uptimeService;
     private readonly ISystemStateMonitor? _systemStateMonitor;
     private WebApplication? _app;
     private Task? _runTask;
@@ -41,26 +41,31 @@ public sealed class ControlApiServer : IControlApiServer
     public ControlApiServer(
         IConfigManager configManager,
         ILogger logger,
+        IUptimeService uptimeService,
         ISecurityManager? securityManager = null,
         ISessionBroker? sessionBroker = null,
         IRemoteDesktopEngine? remoteDesktopEngine = null,
         IPowerManager? powerManager = null,
         IAudioManager? audioManager = null,
-        IUptimeService? uptimeService = null,
         ISystemStateMonitor? systemStateMonitor = null)
     {
         _configManager = configManager;
         _logger = logger;
+        _uptimeService = uptimeService;
         _securityManager = securityManager;
         _sessionBroker = sessionBroker;
         _remoteDesktopEngine = remoteDesktopEngine;
         _powerManager = powerManager;
         _audioManager = audioManager;
-        _uptimeService = uptimeService;
         _systemStateMonitor = systemStateMonitor;
     }
 
     public void Start()
+    {
+        StartAsync(CancellationToken.None).GetAwaiter().GetResult();
+    }
+
+    public async Task StartAsync(CancellationToken cancellationToken)
     {
         var config = _configManager.GetConfig();
         try
@@ -210,7 +215,7 @@ public sealed class ControlApiServer : IControlApiServer
                         Degraded = false
                     };
 
-                var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
+                var uptimeSeconds = _uptimeService.GetUptimeSeconds();
                 var health = new HealthDto
                 {
                     AgentId = config.AgentId,
@@ -360,34 +365,41 @@ public sealed class ControlApiServer : IControlApiServer
 
                 if (request == null || string.IsNullOrEmpty(request.Action))
                 {
-                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Action is required (restart or shutdown)" }, statusCode: 400);
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Action is required (restart, shutdown, or wol)" }, statusCode: 400);
                 }
 
                 var action = request.Action.ToLower();
+                var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+                
                 switch (action)
                 {
                     case "restart":
-                        var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                        _logger.Warn($"[Power] System restart requested via API from {clientIp}");
+                        _logger.Info($"[API] Power action requested: restart (force={request.Force}) from {clientIp}");
                         _powerManager.Restart();
-                        return Results.Ok();
+                        _logger.Info($"[API] Power action restart completed");
+                        return Results.Json(new PowerResponse { Status = "ok", Action = "restart" });
                     case "shutdown":
-                        var clientIp2 = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
-                        _logger.Warn($"[Power] System shutdown requested via API from {clientIp2}");
+                        _logger.Info($"[API] Power action requested: shutdown (force={request.Force}) from {clientIp}");
                         _powerManager.Shutdown();
-                        return Results.Ok();
+                        _logger.Info($"[API] Power action shutdown completed");
+                        return Results.Json(new PowerResponse { Status = "ok", Action = "shutdown" });
+                    case "wol":
+                        // Wake-on-LAN is not currently supported
+                        _logger.Warn($"[API] Power action 'wol' requested but not supported from {clientIp}");
+                        return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Wake-on-LAN (wol) is not supported" }, statusCode: 400);
                     default:
-                        return Results.Json(new ErrorResponse { Error = "invalid_request", Details = $"Unknown action: {request.Action}. Must be 'restart' or 'shutdown'" }, statusCode: 400);
+                        return Results.Json(new ErrorResponse { Error = "invalid_request", Details = $"Unknown action: {request.Action}. Must be 'restart', 'shutdown', or 'wol'" }, statusCode: 400);
                 }
             }
             catch (Exception ex)
             {
-                _logger.Error($"[Power] Error handling power request: {ex.Message}", ex);
-                return Results.Json(new ErrorResponse { Error = "power_operation_failed", Details = ex.Message }, statusCode: 500);
+                _logger.Error($"[API] Error handling power request: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to execute power action");
+                return Results.Json(new ErrorResponse { Error = "power_operation_failed", Details = sanitizedMessage }, statusCode: 500);
             }
         });
 
-            // Audio state
+            // Audio state (legacy endpoint, kept for compatibility)
             _app.MapGet("/api/v1/audio/state", (HttpContext context) =>
         {
             // Check authentication
@@ -436,8 +448,242 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-            // Set device volume
+            // Audio status (new endpoint for HA integration)
+            _app.MapGet("/api/v1/audio/status", (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_audioManager == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                _logger.Info("[API] Audio status requested");
+                var state = _audioManager.GetState();
+                
+                // Get master volume from default device
+                var defaultDevice = state.Devices.FirstOrDefault(d => d.IsDefault);
+                var masterVolume = defaultDevice != null ? defaultDevice.Volume * 100f : 0f; // Convert 0-1 to 0-100
+                var masterMuted = defaultDevice?.Muted ?? false;
+
+                var response = new AudioStatusResponse
+                {
+                    Master = new AudioMasterDto
+                    {
+                        Volume = masterVolume,
+                        Muted = masterMuted
+                    },
+                    Devices = state.Devices.Select(d => new AudioDeviceInfoDto
+                    {
+                        Id = d.Id,
+                        Name = d.Name,
+                        Volume = d.Volume * 100f, // Convert 0-1 to 0-100
+                        Muted = d.Muted,
+                        IsDefault = d.IsDefault
+                    }).ToList()
+                };
+
+                _logger.Info("[API] Audio status retrieved successfully");
+                return Results.Json(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error getting audio status: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to retrieve audio status");
+                return Results.Json(new ErrorResponse { Error = "audio_status_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // Set master volume
+            _app.MapPost("/api/v1/audio/master", async (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_audioManager == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                _logger.Info("[API] Audio master volume change requested");
+                var request = await JsonSerializer.DeserializeAsync<SetMasterVolumeRequest>(
+                    context.Request.Body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (request == null)
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Request body is required" }, statusCode: 400);
+                }
+
+                var state = _audioManager.GetState();
+                var defaultDevice = state.Devices.FirstOrDefault(d => d.IsDefault);
+                
+                if (defaultDevice == null)
+                {
+                    return Results.Json(new ErrorResponse { Error = "not_found", Details = "No default audio device found" }, statusCode: 404);
+                }
+
+                // Get current values if not provided
+                var volume = request.Volume.HasValue 
+                    ? Math.Clamp(request.Volume.Value / 100f, 0f, 1f) // Convert 0-100 to 0-1
+                    : defaultDevice.Volume;
+                var muted = request.Muted ?? defaultDevice.Muted;
+
+                // Validate volume range
+                if (request.Volume.HasValue && (request.Volume.Value < 0 || request.Volume.Value > 100))
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Volume must be between 0 and 100" }, statusCode: 400);
+                }
+
+                // Set device volume (which is the master)
+                _audioManager.SetDeviceVolume(defaultDevice.Id, volume, muted);
+                _logger.Info($"[API] Audio master volume set to {request.Volume ?? volume * 100}%, muted={muted}");
+
+                return Results.Json(new StatusResponse { Status = "ok" });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error setting master volume: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set master volume");
+                return Results.Json(new ErrorResponse { Error = "audio_master_operation_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // Set device volume (updated for HA integration)
             _app.MapPost("/api/v1/audio/device", async (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_audioManager == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                var request = await JsonSerializer.DeserializeAsync<SetDeviceVolumeSimpleRequest>(
+                    context.Request.Body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (request == null || string.IsNullOrEmpty(request.DeviceId))
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Device ID is required" }, statusCode: 400);
+                }
+
+                // Check if device exists
+                var state = _audioManager.GetState();
+                var device = state.Devices.FirstOrDefault(d => d.Id == request.DeviceId);
+                if (device == null)
+                {
+                    _logger.Warn($"[API] Invalid device ID requested: {request.DeviceId}");
+                    return Results.Json(new ErrorResponse { Error = "not_found", Details = $"Device ID '{request.DeviceId}' not found" }, statusCode: 404);
+                }
+
+                // Get current values if not provided
+                var volume = request.Volume.HasValue 
+                    ? Math.Clamp(request.Volume.Value / 100f, 0f, 1f) // Convert 0-100 to 0-1
+                    : device.Volume;
+                var muted = request.Muted ?? device.Muted;
+
+                // Validate volume range
+                if (request.Volume.HasValue && (request.Volume.Value < 0 || request.Volume.Value > 100))
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Volume must be between 0 and 100" }, statusCode: 400);
+                }
+
+                _logger.Info($"[API] Setting device volume: {request.DeviceId}, volume={request.Volume ?? volume * 100}%, muted={muted}");
+                _audioManager.SetDeviceVolume(request.DeviceId, volume, muted);
+                _logger.Info($"[API] Device volume set successfully");
+
+                return Results.Json(new StatusResponse { Status = "ok" });
+            }
+            catch (ArgumentException ex)
+            {
+                _logger.Warn($"[API] Invalid audio device request: {ex.Message}");
+                return Results.Json(new ErrorResponse { Error = "invalid_request", Details = ex.Message }, statusCode: 400);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error setting device volume: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set device volume");
+                return Results.Json(new ErrorResponse { Error = "audio_device_operation_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // Set default audio device
+            _app.MapPost("/api/v1/audio/default", async (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_audioManager == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Audio manager not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                var request = await JsonSerializer.DeserializeAsync<SetDefaultDeviceRequest>(
+                    context.Request.Body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (request == null || string.IsNullOrEmpty(request.DeviceId))
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Device ID is required" }, statusCode: 400);
+                }
+
+                // Check if device exists
+                var state = _audioManager.GetState();
+                var device = state.Devices.FirstOrDefault(d => d.Id == request.DeviceId);
+                if (device == null)
+                {
+                    _logger.Warn($"[API] Invalid device ID requested for default: {request.DeviceId}");
+                    return Results.Json(new ErrorResponse { Error = "not_found", Details = $"Device ID '{request.DeviceId}' not found" }, statusCode: 404);
+                }
+
+                _logger.Info($"[API] Setting default audio device: {request.DeviceId}");
+                _audioManager.SetDefaultOutputDevice(request.DeviceId);
+                _logger.Info($"[API] Default audio device set successfully");
+
+                return Results.Json(new StatusResponse { Status = "ok" });
+            }
+            catch (NotSupportedException ex)
+            {
+                _logger.Warn($"[API] Setting default device not supported: {ex.Message}");
+                return Results.Json(new ErrorResponse { Error = "not_implemented", Details = "Setting default audio device is not supported on this system" }, statusCode: 501);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error setting default device: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to set default audio device");
+                return Results.Json(new ErrorResponse { Error = "audio_default_device_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // Legacy device volume endpoint (kept for compatibility)
+            _app.MapPost("/api/v1/audio/device/legacy", async (HttpContext context) =>
         {
             // Check authentication
             var authResult = CheckAuthentication(context);
@@ -567,7 +813,210 @@ public sealed class ControlApiServer : IControlApiServer
             }
         });
 
-            // WebSocket endpoint
+            // Get monitors
+            _app.MapGet("/api/v1/rd/monitors", (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_remoteDesktopEngine == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Remote desktop engine not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                _logger.Info("[API] Monitors enumeration requested");
+                var monitors = _remoteDesktopEngine.GetMonitors();
+                var currentMonitorId = _remoteDesktopEngine.GetCurrentMonitorId();
+
+                var response = new MonitorsResponse
+                {
+                    Monitors = monitors.Select(m => new MonitorInfoDto
+                    {
+                        Id = m.Id,
+                        Name = m.Name,
+                        Resolution = $"{m.Width}x{m.Height}",
+                        Width = m.Width,
+                        Height = m.Height,
+                        IsPrimary = m.IsPrimary
+                    }).ToList(),
+                    CurrentMonitorId = currentMonitorId
+                };
+
+                _logger.Info($"[API] Monitors enumeration returned {monitors.Count} monitors");
+                return Results.Json(response);
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error enumerating monitors: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to enumerate monitors");
+                return Results.Json(new ErrorResponse { Error = "monitors_enumeration_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // Select monitor
+            _app.MapPost("/api/v1/rd/monitor", async (HttpContext context) =>
+        {
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                return authResult;
+            }
+
+            if (_remoteDesktopEngine == null)
+            {
+                return Results.Json(new ErrorResponse { Error = "service_unavailable", Details = "Remote desktop engine not available" }, statusCode: 503);
+            }
+
+            try
+            {
+                var request = await JsonSerializer.DeserializeAsync<SelectMonitorRequest>(
+                    context.Request.Body,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+
+                if (request == null || string.IsNullOrEmpty(request.MonitorId))
+                {
+                    return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "Monitor ID is required" }, statusCode: 400);
+                }
+
+                // Validate monitor exists
+                var monitors = _remoteDesktopEngine.GetMonitors();
+                var monitor = monitors.FirstOrDefault(m => m.Id == request.MonitorId);
+                if (monitor == null)
+                {
+                    _logger.Warn($"[API] Invalid monitor ID requested: {request.MonitorId}");
+                    return Results.Json(new ErrorResponse { Error = "not_found", Details = $"Monitor ID '{request.MonitorId}' not found" }, statusCode: 404);
+                }
+
+                _logger.Info($"[API] Selecting monitor: {request.MonitorId}");
+                _remoteDesktopEngine.SelectMonitor(request.MonitorId);
+                _logger.Info($"[API] Monitor selected successfully");
+
+                return Results.Json(new SelectMonitorResponse { Status = "ok", MonitorId = request.MonitorId });
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] Error selecting monitor: {ex.Message}", ex);
+                var sanitizedMessage = SanitizeErrorMessage(ex, "Failed to select monitor");
+                return Results.Json(new ErrorResponse { Error = "monitor_selection_failed", Details = sanitizedMessage }, statusCode: 500);
+            }
+        });
+
+            // WebSocket endpoint for input (HA remote control)
+            _app.Map("/api/v1/rd/session", async (HttpContext context) =>
+        {
+            if (!context.WebSockets.IsWebSocketRequest)
+            {
+                context.Response.StatusCode = 400;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "invalid_request", Details = "WebSocket upgrade required" });
+                return;
+            }
+
+            // Check authentication
+            var authResult = CheckAuthentication(context);
+            if (authResult != null)
+            {
+                context.Response.StatusCode = 401;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "unauthorized", Details = "Missing or invalid credentials" });
+                return;
+            }
+
+            if (_remoteDesktopEngine == null)
+            {
+                context.Response.StatusCode = 503;
+                context.Response.ContentType = "application/json";
+                await context.Response.WriteAsJsonAsync(new ErrorResponse { Error = "service_unavailable", Details = "Remote desktop engine not available" });
+                return;
+            }
+
+            var clientIp = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+            _logger.Info($"[API] WebSocket input connection opened from {clientIp}");
+
+            var webSocket = await context.WebSockets.AcceptWebSocketAsync();
+            var buffer = new byte[4096];
+
+            try
+            {
+                while (webSocket.State == WebSocketState.Open)
+                {
+                    var result = await webSocket.ReceiveAsync(new ArraySegment<byte>(buffer), CancellationToken.None);
+
+                    if (result.MessageType == WebSocketMessageType.Close)
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.NormalClosure, "Client closed", CancellationToken.None);
+                        break;
+                    }
+
+                    if (result.MessageType == WebSocketMessageType.Text)
+                    {
+                        var messageText = System.Text.Encoding.UTF8.GetString(buffer, 0, result.Count);
+                        
+                        try
+                        {
+                            var jsonDoc = JsonDocument.Parse(messageText);
+                            if (!jsonDoc.RootElement.TryGetProperty("type", out var typeElement))
+                            {
+                                _logger.Warn($"[API] Invalid WebSocket message: missing 'type' field");
+                                await SendWebSocketError(webSocket, "Invalid message: missing 'type' field");
+                                continue;
+                            }
+
+                            var messageType = typeElement.GetString();
+                            
+                            if (messageType == "pointer")
+                            {
+                                await HandlePointerMessage(jsonDoc, _remoteDesktopEngine);
+                            }
+                            else if (messageType == "keyboard")
+                            {
+                                await HandleKeyboardMessage(jsonDoc, _remoteDesktopEngine);
+                            }
+                            else
+                            {
+                                _logger.Warn($"[API] Unknown WebSocket message type: {messageType}");
+                                await SendWebSocketError(webSocket, $"Unknown message type: {messageType}");
+                            }
+                        }
+                        catch (JsonException ex)
+                        {
+                            _logger.Warn($"[API] Invalid JSON in WebSocket message: {ex.Message}");
+                            await SendWebSocketError(webSocket, "Invalid JSON format");
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.Error($"[API] Error processing WebSocket message: {ex.Message}", ex);
+                            await SendWebSocketError(webSocket, "Error processing message");
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"[API] WebSocket error: {ex.Message}", ex);
+            }
+            finally
+            {
+                if (webSocket.State == WebSocketState.Open)
+                {
+                    try
+                    {
+                        await webSocket.CloseAsync(WebSocketCloseStatus.InternalServerError, "Server error", CancellationToken.None);
+                    }
+                    catch { }
+                }
+                _logger.Info($"[API] WebSocket input connection closed from {clientIp}");
+            }
+        });
+
+            // WebSocket endpoint (legacy desktop session)
             _app.Map("/ws/desktop", async (HttpContext context) =>
         {
             if (!context.WebSockets.IsWebSocketRequest)
@@ -666,7 +1115,7 @@ public sealed class ControlApiServer : IControlApiServer
             
             try
             {
-                _runTask = _app.RunAsync();
+                _runTask = _app.RunAsync(cancellationToken);
             }
             catch (Exception startEx)
             {
@@ -682,8 +1131,8 @@ public sealed class ControlApiServer : IControlApiServer
                 throw;
             }
             
-            // Set up error handler for async failures
-            _runTask.ContinueWith(task =>
+            // Set up error handler for async failures (fire-and-forget)
+            _ = _runTask.ContinueWith(task =>
             {
                 if (task.IsFaulted)
                 {
@@ -702,7 +1151,7 @@ public sealed class ControlApiServer : IControlApiServer
                 }
             }, TaskContinuationOptions.OnlyOnFaulted);
 
-            // Wait for server to start binding (synchronous wait with timeout)
+            // Wait for server to start binding (async wait with timeout)
             // This helps catch immediate binding failures
             var startTimeout = TimeSpan.FromSeconds(10);
             var startTime = DateTime.UtcNow;
@@ -713,6 +1162,8 @@ public sealed class ControlApiServer : IControlApiServer
             
             while (DateTime.UtcNow - startTime < startTimeout)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+                
                 // Check if task has faulted
                 if (_runTask != null && _runTask.IsFaulted)
                 {
@@ -729,19 +1180,23 @@ public sealed class ControlApiServer : IControlApiServer
                     throw new InvalidOperationException($"Failed to start API server on port {config.HttpPort}", ex);
                 }
                 
-                // Check if port is listening by trying to connect
+                // Check if port is listening by trying to connect (async)
                 try
                 {
                     using var client = new System.Net.Sockets.TcpClient();
+                    using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    
                     var connectTask = client.ConnectAsync(IPAddress.Loopback, config.HttpPort);
-                    if (connectTask.Wait(TimeSpan.FromMilliseconds(500)))
+                    var timeoutTask = Task.Delay(Timeout.Infinite, timeoutCts.Token);
+                    
+                    var completedTask = await Task.WhenAny(connectTask, timeoutTask);
+                    
+                    if (completedTask == connectTask && client.Connected)
                     {
-                        if (client.Connected)
-                        {
-                            client.Close();
-                            portListening = true;
-                            break;
-                        }
+                        client.Close();
+                        portListening = true;
+                        break;
                     }
                 }
                 catch
@@ -749,8 +1204,8 @@ public sealed class ControlApiServer : IControlApiServer
                     // Port not ready yet, continue waiting
                 }
                 
-                // Small delay before next check
-                System.Threading.Thread.Sleep(500);
+                // Small delay before next check (async)
+                await Task.Delay(500, cancellationToken);
             }
             
             // Final check for errors
@@ -934,6 +1389,227 @@ public sealed class ControlApiServer : IControlApiServer
     /// Checks if the request is from localhost (127.0.0.1 or ::1).
     /// Returns null if localhost, or an error result if not.
     /// </summary>
+    private Task HandlePointerMessage(JsonDocument jsonDoc, IRemoteDesktopEngine remoteDesktopEngine)
+    {
+        var root = jsonDoc.RootElement;
+        if (!root.TryGetProperty("event", out var eventElement))
+        {
+            _logger.Warn("[API] Pointer message missing 'event' field");
+            return Task.CompletedTask;
+        }
+
+        var eventType = eventElement.GetString();
+        
+        switch (eventType)
+        {
+            case "move":
+                if (root.TryGetProperty("dx", out var dxElement) && root.TryGetProperty("dy", out var dyElement))
+                {
+                    var dx = (int)Math.Round(dxElement.GetSingle());
+                    var dy = (int)Math.Round(dyElement.GetSingle());
+                    var evt = new Openctrol.Agent.Input.PointerEvent
+                    {
+                        Kind = Openctrol.Agent.Input.PointerEventKind.MoveRelative,
+                        Dx = dx,
+                        Dy = dy
+                    };
+                    remoteDesktopEngine.InjectPointer(evt);
+                }
+                break;
+
+            case "click":
+                if (root.TryGetProperty("button", out var buttonElement))
+                {
+                    var buttonStr = buttonElement.GetString();
+                    var button = buttonStr?.ToLower() switch
+                    {
+                        "left" => Openctrol.Agent.Input.MouseButton.Left,
+                        "right" => Openctrol.Agent.Input.MouseButton.Right,
+                        "middle" => Openctrol.Agent.Input.MouseButton.Middle,
+                        _ => (Openctrol.Agent.Input.MouseButton?)null
+                    };
+
+                    if (button.HasValue)
+                    {
+                        var evt = new Openctrol.Agent.Input.PointerEvent
+                        {
+                            Kind = Openctrol.Agent.Input.PointerEventKind.Button,
+                            Button = button.Value,
+                            ButtonAction = Openctrol.Agent.Input.MouseButtonAction.Down
+                        };
+                        remoteDesktopEngine.InjectPointer(evt);
+                        
+                        // Also send button up
+                        var evtUp = new Openctrol.Agent.Input.PointerEvent
+                        {
+                            Kind = Openctrol.Agent.Input.PointerEventKind.Button,
+                            Button = button.Value,
+                            ButtonAction = Openctrol.Agent.Input.MouseButtonAction.Up
+                        };
+                        remoteDesktopEngine.InjectPointer(evtUp);
+                    }
+                }
+                break;
+
+            case "scroll":
+                if (root.TryGetProperty("dx", out var scrollDxElement) && root.TryGetProperty("dy", out var scrollDyElement))
+                {
+                    var scrollDx = (int)Math.Round(scrollDxElement.GetSingle());
+                    var scrollDy = (int)Math.Round(scrollDyElement.GetSingle());
+                    var evt = new Openctrol.Agent.Input.PointerEvent
+                    {
+                        Kind = Openctrol.Agent.Input.PointerEventKind.Wheel,
+                        WheelDeltaX = scrollDx,
+                        WheelDeltaY = scrollDy
+                    };
+                    remoteDesktopEngine.InjectPointer(evt);
+                }
+                break;
+
+            default:
+                _logger.Warn($"[API] Unknown pointer event type: {eventType}");
+                break;
+        }
+        
+        return Task.CompletedTask;
+    }
+
+    private Task HandleKeyboardMessage(JsonDocument jsonDoc, IRemoteDesktopEngine remoteDesktopEngine)
+    {
+        var root = jsonDoc.RootElement;
+        if (!root.TryGetProperty("keys", out var keysElement))
+        {
+            _logger.Warn("[API] Keyboard message missing 'keys' field");
+            return Task.CompletedTask;
+        }
+
+        var keys = keysElement.EnumerateArray().Select(k => k.GetString() ?? "").ToList();
+        if (keys.Count == 0)
+        {
+            _logger.Warn("[API] Keyboard message has empty 'keys' array");
+            return Task.CompletedTask;
+        }
+
+        // Parse modifiers and main keys
+        var modifiers = Openctrol.Agent.Input.KeyModifiers.None;
+        var mainKeys = new List<int>();
+
+        foreach (var keyStr in keys)
+        {
+            var keyUpper = keyStr.ToUpperInvariant();
+            switch (keyUpper)
+            {
+                case "CTRL":
+                    modifiers |= Openctrol.Agent.Input.KeyModifiers.Ctrl;
+                    break;
+                case "ALT":
+                    modifiers |= Openctrol.Agent.Input.KeyModifiers.Alt;
+                    break;
+                case "SHIFT":
+                    modifiers |= Openctrol.Agent.Input.KeyModifiers.Shift;
+                    break;
+                case "WIN":
+                    modifiers |= Openctrol.Agent.Input.KeyModifiers.Win;
+                    break;
+                default:
+                    // Try to map to key code
+                    var keyCode = MapKeyNameToCode(keyUpper);
+                    if (keyCode.HasValue)
+                    {
+                        mainKeys.Add(keyCode.Value);
+                    }
+                    else
+                    {
+                        _logger.Warn($"[API] Unknown key name: {keyStr}");
+                    }
+                    break;
+            }
+        }
+
+        // Send key down for all keys
+        foreach (var keyCode in mainKeys)
+        {
+            var evt = new Openctrol.Agent.Input.KeyboardEvent
+            {
+                Kind = Openctrol.Agent.Input.KeyboardEventKind.KeyDown,
+                KeyCode = keyCode,
+                Modifiers = modifiers
+            };
+            remoteDesktopEngine.InjectKey(evt);
+        }
+
+        // Send key up for all keys (in reverse order)
+        foreach (var keyCode in mainKeys.Reverse<int>())
+        {
+            var evt = new Openctrol.Agent.Input.KeyboardEvent
+            {
+                Kind = Openctrol.Agent.Input.KeyboardEventKind.KeyUp,
+                KeyCode = keyCode,
+                Modifiers = modifiers
+            };
+            remoteDesktopEngine.InjectKey(evt);
+        }
+
+        // Release modifiers
+        if (modifiers != Openctrol.Agent.Input.KeyModifiers.None)
+        {
+            // Modifiers are released automatically by InputDispatcher
+        }
+        
+        return Task.CompletedTask;
+    }
+
+    private int? MapKeyNameToCode(string keyName)
+    {
+        // Map common key names to virtual key codes
+        return keyName switch
+        {
+            "TAB" => 0x09,
+            "ENTER" => 0x0D,
+            "ESC" => 0x1B,
+            "SPACE" => 0x20,
+            "BACKSPACE" => 0x08,
+            "DEL" => 0x2E,
+            "INSERT" => 0x2D,
+            "HOME" => 0x24,
+            "END" => 0x23,
+            "PAGEUP" => 0x21,
+            "PAGEDOWN" => 0x22,
+            "UP" => 0x26,
+            "DOWN" => 0x28,
+            "LEFT" => 0x25,
+            "RIGHT" => 0x27,
+            "F1" => 0x70,
+            "F2" => 0x71,
+            "F3" => 0x72,
+            "F4" => 0x73,
+            "F5" => 0x74,
+            "F6" => 0x75,
+            "F7" => 0x76,
+            "F8" => 0x77,
+            "F9" => 0x78,
+            "F10" => 0x79,
+            "F11" => 0x7A,
+            "F12" => 0x7B,
+            _ => null
+        };
+    }
+
+    private async Task SendWebSocketError(WebSocket webSocket, string message)
+    {
+        try
+        {
+            var error = new ErrorMessage { Type = "error", Message = message };
+            var json = JsonSerializer.Serialize(error);
+            var bytes = System.Text.Encoding.UTF8.GetBytes(json);
+            await webSocket.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Text, true, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            _logger.Error($"[API] Error sending WebSocket error message: {ex.Message}", ex);
+        }
+    }
+
     private static IResult? CheckLocalhostOnly(HttpContext context)
     {
         var remoteIp = context.Connection.RemoteIpAddress;
@@ -1006,7 +1682,7 @@ public sealed class ControlApiServer : IControlApiServer
             try
             {
                 var config = _configManager.GetConfig();
-                var uptimeSeconds = _uptimeService?.GetUptimeSeconds() ?? 0;
+                var uptimeSeconds = _uptimeService.GetUptimeSeconds();
                 
                 // Get service status
                 var serviceStatus = GetServiceStatus();

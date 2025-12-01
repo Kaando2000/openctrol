@@ -12,12 +12,13 @@ using Openctrol.Agent.Input;
 using Openctrol.Agent.Power;
 using Openctrol.Agent.Audio;
 using System.Diagnostics;
+using System.Threading;
 
 namespace Openctrol.Agent;
 
 public static class Program
 {
-    public static void Main(string[] args)
+    public static int Main(string[] args)
     {
         // Check for console mode
         var isConsoleMode = args.Contains("--console") || Environment.UserInteractive;
@@ -61,7 +62,6 @@ public static class Program
             catch { }
         }
 
-        IHost? host = null;
         try
         {
             var hostBuilder = Host.CreateDefaultBuilder(args);
@@ -90,6 +90,9 @@ public static class Program
                     return new CompositeLogger(loggers.ToArray());
                 });
                 
+                // Register IUptimeService first (independent, no dependencies)
+                services.AddSingleton<IUptimeService, UptimeService>();
+                
                 services.AddSingleton<InputDispatcher>();
                 services.AddSingleton<ISecurityManager, SecurityManager>();
                 services.AddSingleton<ISystemStateMonitor, SystemStateMonitor>();
@@ -97,15 +100,19 @@ public static class Program
                 services.AddSingleton<ISessionBroker, SessionBroker>();
                 services.AddSingleton<IPowerManager, PowerManager>();
                 services.AddSingleton<IAudioManager, AudioManager>();
+                
+                // Register IControlApiServer (now depends on IUptimeService, not AgentHost)
                 services.AddSingleton<IControlApiServer, ControlApiServer>();
 
-                // Register AgentHost as both hosted service and uptime service
-                services.AddSingleton<AgentHost>();
-                services.AddSingleton<IUptimeService>(sp => sp.GetRequiredService<AgentHost>());
-                services.AddHostedService<AgentHost>(sp => sp.GetRequiredService<AgentHost>());
+                // Register AgentHost as hosted service (only in service mode)
+                if (!isConsoleMode)
+                {
+                    services.AddSingleton<AgentHost>();
+                    services.AddHostedService<AgentHost>(sp => sp.GetRequiredService<AgentHost>());
+                }
             });
 
-            host = hostBuilder.Build();
+            using var host = hostBuilder.Build();
             
             // Log that host is built
             try
@@ -114,45 +121,62 @@ public static class Program
             }
             catch { }
             
-            // In console mode, add console logging
+            var services = host.Services;
+            
             if (isConsoleMode)
             {
+                // CONSOLE MODE: do NOT call host.StartAsync / RunAsync at all.
+                earlyLogger?.Info("[BOOT] Running in console mode via AgentBootstrap - press Ctrl+C to stop");
+                
                 try
                 {
-                    var logger = host.Services.GetRequiredService<ILogger>();
-                    logger.Info("[BOOT] Running in console mode - press Ctrl+C to stop");
+                    // Get our custom logger and wrap it for AgentBootstrap
+                    var customLogger = services.GetRequiredService<ILogger>();
+                    var loggerAdapter = new LoggerAdapter(customLogger);
+                    
+                    using var cts = new CancellationTokenSource();
+                    Console.CancelKeyPress += (_, e) =>
+                    {
+                        e.Cancel = true;
+                        cts.Cancel();
+                    };
+                    
+                    var exitCode = AgentBootstrap.RunConsoleAsync(services, loggerAdapter, cts.Token)
+                        .GetAwaiter()
+                        .GetResult();
+                    
+                    return exitCode;
                 }
                 catch (Exception ex)
                 {
-                    try
-                    {
-                        earlyLogger?.Error($"[BOOT] Failed to get logger from host: {ex.Message}", ex);
-                    }
-                    catch { }
+                    earlyLogger?.Error("[BOOT] Fatal exception in AgentBootstrap console run.", ex);
+                    throw;
                 }
             }
-            
-            // Log that we're about to start the host
-            try
+            else
             {
-                earlyLogger?.Info("[BOOT] Starting host (this will start all hosted services)...");
-            }
-            catch { }
-            
-            // Start the host - this will start all IHostedService instances
-            try
-            {
-                earlyLogger?.Info("[BOOT] Calling host.RunAsync()...");
-                var runTask = host.RunAsync();
-                earlyLogger?.Info("[BOOT] host.RunAsync() returned Task; awaiting completion...");
-                runTask.GetAwaiter().GetResult();
-                earlyLogger?.Info("[BOOT] host.RunAsync() completed normally. Host stopped.");
-            }
-            catch (Exception ex)
-            {
-                // Use the same logging style / overloads as the existing global catch.
-                earlyLogger?.Error("[BOOT] host.RunAsync() threw a fatal exception.", ex);
-                throw;
+                // SERVICE MODE: keep existing Windows service hosting behavior
+                earlyLogger?.Info("[BOOT] Running as Windows service");
+                earlyLogger?.Info("[BOOT] Service mode: host.RunAsync is about to be called.");
+                
+                try
+                {
+                    earlyLogger?.Info("[BOOT] Calling host.RunAsync()...");
+                    var runTask = host.RunAsync();
+                    earlyLogger?.Info("[BOOT] Service mode: host.RunAsync() returned a Task.");
+                    earlyLogger?.Info("[BOOT] host.RunAsync() returned Task; awaiting completion...");
+                    runTask.GetAwaiter().GetResult();
+                    earlyLogger?.Info("[BOOT] Service mode: host.RunAsync completed normally.");
+                    earlyLogger?.Info("[BOOT] host.RunAsync() completed normally. Host stopped.");
+                    return 0;
+                }
+                catch (Exception ex)
+                {
+                    // Use the same logging style / overloads as the existing global catch.
+                    earlyLogger?.Error("[BOOT] Service mode: host.RunAsync() threw a fatal exception.", ex);
+                    earlyLogger?.Error("[BOOT] host.RunAsync() threw a fatal exception.", ex);
+                    throw;
+                }
             }
         }
         catch (Exception ex)
@@ -174,7 +198,7 @@ public static class Program
             catch { }
             
             // Re-throw to ensure service fails
-            throw;
+            return 1;
         }
     }
 }

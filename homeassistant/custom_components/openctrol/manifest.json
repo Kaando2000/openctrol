@@ -1,0 +1,12 @@
+{
+  "domain": "openctrol",
+  "name": "Openctrol Agent",
+  "version": "0.1.0",
+  "documentation": "https://github.com/Kaando2000/openctrol",
+  "requirements": [],
+  "codeowners": ["@Kaando2000"],
+  "config_flow": true,
+  "iot_class": "local_polling",
+  "loggers": ["custom_components.openctrol"]
+}
+

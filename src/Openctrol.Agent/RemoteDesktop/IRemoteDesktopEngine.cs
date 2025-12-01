@@ -10,6 +10,7 @@ public interface IRemoteDesktopEngine
     RemoteDesktopStatus GetStatus();
     IReadOnlyList<MonitorInfo> GetMonitors();
     void SelectMonitor(string monitorId);
+    string GetCurrentMonitorId();
 
     void RegisterFrameSubscriber(IFrameSubscriber subscriber);
     void UnregisterFrameSubscriber(IFrameSubscriber subscriber);

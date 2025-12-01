@@ -1,0 +1,195 @@
+power_action:
+  name: Power Action
+  description: Execute power management actions (restart, shutdown, wol).
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    action:
+      name: Action
+      description: Power action to perform.
+      required: true
+      selector:
+        select:
+          options:
+            - restart
+            - shutdown
+            - wol
+    force:
+      name: Force
+      description: Force the action (optional).
+      required: false
+      selector:
+        boolean:
+
+set_master_volume:
+  name: Set Master Volume
+  description: Set master audio volume and/or mute state.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    volume:
+      name: Volume
+      description: Master volume (0-100).
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    muted:
+      name: Muted
+      description: Mute state.
+      required: false
+      selector:
+        boolean:
+
+set_device_volume:
+  name: Set Device Volume
+  description: Set audio device volume and/or mute state.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    device_id:
+      name: Device ID
+      description: Audio device identifier.
+      required: true
+      selector:
+        text:
+    volume:
+      name: Volume
+      description: Device volume (0-100).
+      required: false
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+    muted:
+      name: Muted
+      description: Mute state.
+      required: false
+      selector:
+        boolean:
+
+set_default_output_device:
+  name: Set Default Output Device
+  description: Set the default audio output device.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    device_id:
+      name: Device ID
+      description: Audio device identifier.
+      required: true
+      selector:
+        text:
+
+select_monitor:
+  name: Select Monitor
+  description: Select which monitor to capture for remote desktop.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    monitor_id:
+      name: Monitor ID
+      description: Monitor identifier (e.g., DISPLAY1, DISPLAY2).
+      required: true
+      selector:
+        text:
+
+send_key_combo:
+  name: Send Key Combo
+  description: Send a keyboard key combination.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    keys:
+      name: Keys
+      description: Array of key names to press simultaneously (e.g., ["CTRL", "ALT", "DEL"]).
+      required: true
+      selector:
+        object:
+
+send_pointer_event:
+  name: Send Pointer Event
+  description: Send a pointer (mouse) event (move, click, or scroll).
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    type:
+      name: Type
+      description: Event type (move, click, or scroll).
+      required: true
+      selector:
+        select:
+          options:
+            - move
+            - click
+            - scroll
+    dx:
+      name: Delta X
+      description: Horizontal delta (for move/scroll events).
+      required: false
+      selector:
+        number:
+    dy:
+      name: Delta Y
+      description: Vertical delta (for move/scroll events).
+      required: false
+      selector:
+        number:
+    button:
+      name: Button
+      description: Mouse button (for click events).
+      required: false
+      selector:
+        select:
+          options:
+            - left
+            - right
+            - middle
+

@@ -191,6 +191,11 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         _logger.Info($"[RemoteDesktop] Selected monitor: {monitorId}");
     }
 
+    public string GetCurrentMonitorId()
+    {
+        return _currentMonitorId;
+    }
+
     public void RegisterFrameSubscriber(IFrameSubscriber subscriber)
     {
         lock (_subscribersLock)

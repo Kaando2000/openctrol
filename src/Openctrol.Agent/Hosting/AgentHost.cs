@@ -3,26 +3,21 @@ using Openctrol.Agent.Config;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 using Openctrol.Agent.Web;
 using Openctrol.Agent.RemoteDesktop;
-using System.IO;
 using System.Diagnostics;
 
 namespace Openctrol.Agent.Hosting;
 
-public sealed class AgentHost : BackgroundService, IUptimeService
+public sealed class AgentHost : BackgroundService
 {
     private readonly IConfigManager _configManager;
     private readonly ILogger _logger;
-    private readonly IControlApiServer? _apiServer;
+    private readonly IControlApiServer _apiServer;
     private readonly IRemoteDesktopEngine? _remoteDesktopEngine;
-    private readonly DateTimeOffset _startTime = DateTimeOffset.UtcNow;
-
-    public long GetUptimeSeconds() => (long)(DateTimeOffset.UtcNow - _startTime).TotalSeconds;
-    public DateTimeOffset GetStartTime() => _startTime;
 
     public AgentHost(
         IConfigManager configManager,
         ILogger logger,
-        IControlApiServer? apiServer = null,
+        IControlApiServer apiServer,
         IRemoteDesktopEngine? remoteDesktopEngine = null)
     {
         // Log constructor call to verify service is being constructed
@@ -43,7 +38,7 @@ public sealed class AgentHost : BackgroundService, IUptimeService
         try
         {
             System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
-                $"[BOOT] AgentHost constructor completed. API server: {(_apiServer != null ? "found" : "null")}", 
+                "[BOOT] AgentHost constructor completed", 
                 System.Diagnostics.EventLogEntryType.Information);
         }
         catch { }
@@ -51,6 +46,9 @@ public sealed class AgentHost : BackgroundService, IUptimeService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        // Yield immediately to ensure BackgroundService.StartAsync can return quickly
+        await Task.Yield();
+        
         // Log entry point - this confirms ExecuteAsync is being called
         try
         {
@@ -62,121 +60,21 @@ public sealed class AgentHost : BackgroundService, IUptimeService
         
         var version = System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString() ?? "1.0.0";
         _logger.Info($"[BOOT] Openctrol Agent starting, version={version}");
+        _logger.Info("[SERVICE] AgentHost.ExecuteAsync entered.");
+        _logger.Info("[SERVICE] Starting AgentCore...");
 
         try
         {
-            // Load and validate configuration
-            var configPath = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.CommonApplicationData),
-                "Openctrol",
-                "config.json");
-            _logger.Info($"[BOOT] Config loaded from {configPath}");
-            
-            // Validate configuration
-            try
-            {
-                _configManager.ValidateConfig();
-            }
-            catch (InvalidOperationException ex)
-            {
-                _logger.Error($"Configuration validation failed: {ex.Message}", ex);
-                throw; // Fail startup on invalid config
-            }
+            // Use shared startup logic (includes main loop)
+            await AgentCore.StartAsync(
+                _configManager,
+                _logger,
+                _apiServer,
+                _remoteDesktopEngine,
+                stoppingToken);
 
-            var config = _configManager.GetConfig();
-            
-            // Log configuration summary with [BOOT] and [CONFIG] prefixes
-            var haIdCount = config.AllowedHaIds?.Count ?? 0;
-            var tlsMode = !string.IsNullOrEmpty(config.CertPath) && File.Exists(config.CertPath) ? "HTTPS" : "HTTP";
-            var authMode = string.IsNullOrEmpty(config.ApiKey) ? "DISABLED (development mode)" : "ENABLED";
-            
-            _logger.Info($"[CONFIG] HTTP port={config.HttpPort}, UseHttps={tlsMode == "HTTPS"}, CertPath={config.CertPath ?? "<none>"}");
-            _logger.Info("=== Openctrol Agent Configuration ===");
-            _logger.Info($"Version: {version}");
-            _logger.Info($"Agent ID: {config.AgentId}");
-            _logger.Info($"Mode: {tlsMode}");
-            _logger.Info($"Port: {config.HttpPort}");
-            _logger.Info($"Max Sessions: {config.MaxSessions}");
-            _logger.Info($"Target FPS: {config.TargetFps}");
-            _logger.Info($"HA IDs in allowlist: {haIdCount}");
-            _logger.Info($"Authentication: {authMode}");
-            if (string.IsNullOrEmpty(config.ApiKey))
-            {
-                _logger.Warn("SECURITY WARNING: API key not configured. REST endpoints are accessible without authentication!");
-            }
-            _logger.Info($"Audio subsystem: {(System.Runtime.InteropServices.RuntimeInformation.IsOSPlatform(System.Runtime.InteropServices.OSPlatform.Windows) ? "Available" : "Not available")}");
-            _logger.Info("=====================================");
-
-            // Start remote desktop engine if available
-            if (_remoteDesktopEngine != null)
-            {
-                _remoteDesktopEngine.Start();
-                _logger.Info("Remote desktop engine started");
-            }
-            else
-            {
-                _logger.Warn("Remote desktop engine not available (stub)");
-            }
-
-            // Start API server if available
-            if (_apiServer != null)
-            {
-                _logger.Info("[BOOT] API server instance found, calling Start()...");
-                
-                try
-                {
-                    _logger.Info("[BOOT] Starting HTTP API server...");
-                    
-                    // Write directly to Event Log before starting
-                    try
-                    {
-                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
-                            "[BOOT] Starting HTTP API server...", 
-                            System.Diagnostics.EventLogEntryType.Information);
-                    }
-                    catch { }
-                    
-                    _apiServer.Start();
-                    
-                    _logger.Info("[BOOT] API server Start() method completed without exception");
-                    
-                    // Success message is logged by ControlApiServer.Start()
-                }
-                catch (Exception ex)
-                {
-                    var errorMsg = $"[BOOT] [ERROR] Failed to start API server - this is a fatal error: {ex.Message}";
-                    _logger.Error(errorMsg, ex);
-                    
-                    // Write directly to Event Log
-                    try
-                    {
-                        System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", 
-                            $"{errorMsg}\nType: {ex.GetType().Name}\nStack: {ex.StackTrace}", 
-                            System.Diagnostics.EventLogEntryType.Error);
-                    }
-                    catch { }
-                    
-                    throw; // Fail startup if API server cannot start
-                }
-            }
-            else
-            {
-                var warnMsg = "[BOOT] [WARN] API server instance is null - server will not start";
-                _logger.Warn(warnMsg);
-                try
-                {
-                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent", warnMsg, System.Diagnostics.EventLogEntryType.Warning);
-                }
-                catch { }
-            }
-
+            _logger.Info("[SERVICE] AgentCore started successfully (service mode).");
             _logger.Info("[BOOT] Openctrol Agent started successfully");
-
-            // Keep running until cancellation
-            while (!stoppingToken.IsCancellationRequested)
-            {
-                await Task.Delay(1000, stoppingToken);
-            }
         }
         catch (Exception ex)
         {
