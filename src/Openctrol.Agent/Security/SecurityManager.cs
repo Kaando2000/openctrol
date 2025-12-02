@@ -25,32 +25,31 @@ public sealed class SecurityManager : ISecurityManager, IDisposable
         _cleanupTimer = new System.Threading.Timer(CleanupExpiredTokens, null, TimeSpan.FromMinutes(1), TimeSpan.FromMinutes(1));
     }
 
+    // NOTE: HA installation ID allowlist is currently disabled by design.
+    // Authentication is enforced via API key + LAN/localhost checks only.
     public bool IsHaAllowed(string haId)
     {
         var config = _configManager.GetConfig();
-        // Handle null AllowedHaIds (defensive check in case deserialization didn't initialize it)
-        if (config.AllowedHaIds == null || config.AllowedHaIds.Count == 0)
+        
+        // Log the received HA ID for informational purposes, but do not block requests
+        if (config.AllowedHaIds != null && config.AllowedHaIds.Count > 0)
         {
-            // Security: Empty allowlist means deny-all by default (secure by default)
-            // For development, explicitly add HA IDs to the allowlist
-            _logger.Debug($"[Security] HA ID {haId} denied - allowlist is empty (deny-all by default)");
-            return false;
+            _logger.Info($"[Security] Ignoring HA ID allowlist (feature disabled). Received ID: {haId}");
         }
-
-        var allowed = config.AllowedHaIds.Contains(haId);
-        if (!allowed)
+        else
         {
-            _logger.Debug($"[Security] HA ID {haId} not in allowlist");
+            _logger.Debug($"[Security] HA ID allowlist check disabled. Received ID: {haId}");
         }
-        return allowed;
+        
+        // Always allow - HA ID allowlist check is disabled
+        return true;
     }
 
     public SessionToken IssueDesktopSessionToken(string haId, TimeSpan ttl)
     {
-        if (!IsHaAllowed(haId))
-        {
-            throw new UnauthorizedAccessException($"HA ID {haId} is not allowed");
-        }
+        // NOTE: HA ID allowlist check is disabled - IsHaAllowed() always returns true
+        // This call is kept for logging purposes only
+        IsHaAllowed(haId);
 
         var token = GenerateToken();
         var sessionToken = new SessionToken

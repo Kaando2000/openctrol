@@ -8,7 +8,10 @@
  * Required config: entity (Openctrol status sensor entity_id)
  */
 
-// LitElement, html, and css are provided by Home Assistant frontend
+// Import LitElement, html, and css from lit
+// Home Assistant provides lit globally, but for standalone ES modules we use a CDN fallback
+import { LitElement, html, css } from "https://cdn.jsdelivr.net/npm/lit@3/+esm";
+
 class OpenctrolCard extends LitElement {
   static get properties() {
     return {
@@ -466,6 +469,208 @@ class OpenctrolCard extends LitElement {
         margin: 16px;
         text-align: center;
       }
+
+      .monitor-list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .monitor-button {
+        width: 100%;
+        padding: 12px 16px;
+        border-radius: 8px;
+        border: 2px solid #e0e0e0;
+        background: white;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        text-align: left;
+      }
+
+      .monitor-button:hover:not(:disabled) {
+        border-color: var(--primary-color);
+        background: #f5f5f5;
+      }
+
+      .monitor-button.active {
+        border-color: var(--primary-color);
+        background: var(--primary-color);
+        color: white;
+      }
+
+      .monitor-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .monitor-button-content {
+        flex: 1;
+      }
+
+      .monitor-name {
+        font-weight: 600;
+        font-size: 14px;
+        margin-bottom: 4px;
+      }
+
+      .monitor-details {
+        font-size: 12px;
+        color: #666;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .monitor-button.active .monitor-details {
+        color: rgba(255, 255, 255, 0.9);
+      }
+
+      .primary-badge {
+        background: rgba(0, 0, 0, 0.1);
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .monitor-button.active .primary-badge {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .selected-indicator {
+        font-size: 20px;
+        font-weight: bold;
+        margin-left: 12px;
+      }
+
+      .device-list {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+
+      .device-item {
+        padding: 12px;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background: #fafafa;
+      }
+
+      .device-header {
+        margin-bottom: 12px;
+      }
+
+      .device-name {
+        font-weight: 600;
+        font-size: 14px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .default-badge {
+        background: var(--primary-color);
+        color: white;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+      }
+
+      .device-controls {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .device-slider {
+        flex: 1;
+      }
+
+      .device-volume {
+        min-width: 50px;
+      }
+
+      .device-mute {
+        padding: 8px 12px;
+        min-width: 50px;
+      }
+
+      .set-default-button {
+        padding: 8px 16px;
+        font-size: 12px;
+        min-width: auto;
+      }
+
+      .video-container {
+        position: relative;
+        width: 100%;
+        background: #000;
+        border-radius: 8px;
+        overflow: hidden;
+        margin: 16px;
+        min-height: 300px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .video-canvas {
+        max-width: 100%;
+        max-height: 100%;
+        width: auto;
+        height: auto;
+        display: block;
+      }
+
+      .video-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        gap: 12px;
+      }
+
+      .video-controls {
+        display: flex;
+        gap: 8px;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 4px;
+      }
+
+      .video-button {
+        padding: 8px 16px;
+        border-radius: 4px;
+        border: 1px solid rgba(255, 255, 255, 0.3);
+        background: rgba(255, 255, 255, 0.1);
+        color: white;
+        font-size: 12px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .video-button:hover {
+        background: rgba(255, 255, 255, 0.2);
+      }
+
+      .video-status {
+        font-size: 14px;
+        font-weight: 500;
+      }
     `;
   }
 
@@ -485,7 +690,7 @@ class OpenctrolCard extends LitElement {
   }
 
   setConfig(config) {
-    if (!config.entity) {
+    if (!config || !config.entity) {
       throw new Error("Entity is required");
     }
     this.config = {
@@ -501,7 +706,22 @@ class OpenctrolCard extends LitElement {
   set hass(hass) {
     this._hass = hass;
     if (hass && this.config) {
-      this._entity = hass.states[this.config.entity];
+      const newEntity = hass.states[this.config.entity];
+      if (newEntity !== this._entity) {
+        this._entity = newEntity;
+        // Sync master volume from entity attributes
+        if (this._entity?.attributes) {
+          const vol = this._entity.attributes.master_volume;
+          const muted = this._entity.attributes.master_muted;
+          if (vol !== undefined && vol !== null) {
+            this._masterVolume = Math.round(vol);
+          }
+          if (muted !== undefined && muted !== null) {
+            this._masterMuted = muted;
+          }
+        }
+        this.requestUpdate();
+      }
     }
   }
 
@@ -622,11 +842,17 @@ class OpenctrolCard extends LitElement {
   _sendKeyCombo(keys) {
     if (!this._entity || !this._isOnline) return;
     
-    // If keys is already an array (from shortcut), use it directly
-    // Otherwise combine with latched modifiers
-    const combo = Array.isArray(keys) && keys.length > 1 
-      ? keys 
-      : [...this._latchedModifiers, ...(Array.isArray(keys) ? keys : [keys])];
+    // If keys is already an array (from shortcut), use it directly (ignore latched modifiers)
+    // Otherwise combine with latched modifiers (set union to avoid duplicates)
+    let combo;
+    if (Array.isArray(keys) && keys.length > 1) {
+      // Shortcut - use as-is, ignore latched modifiers
+      combo = keys;
+    } else {
+      // Regular key - combine with latched modifiers (set union)
+      const keyArray = Array.isArray(keys) ? keys : [keys];
+      combo = [...new Set([...this._latchedModifiers, ...keyArray])];
+    }
     
     this.hass.callService("openctrol", "send_key_combo", {
       entity_id: this.config.entity,
@@ -726,6 +952,30 @@ class OpenctrolCard extends LitElement {
     });
   }
 
+  _handleDeviceVolumeChange(deviceId, volume, muted) {
+    if (!this._entity || !this._isOnline) return;
+    
+    this.hass.callService("openctrol", "set_device_volume", {
+      entity_id: this.config.entity,
+      device_id: deviceId,
+      volume: volume,
+      muted: muted,
+    }).catch((err) => {
+      console.error("Failed to set device volume:", err);
+    });
+  }
+
+  _handleSetDefaultDevice(deviceId) {
+    if (!this._entity || !this._isOnline) return;
+    
+    this.hass.callService("openctrol", "set_default_output_device", {
+      entity_id: this.config.entity,
+      device_id: deviceId,
+    }).catch((err) => {
+      console.error("Failed to set default device:", err);
+    });
+  }
+
   _renderTopBar() {
     return html`
       <div class="top-bar">
@@ -798,6 +1048,225 @@ class OpenctrolCard extends LitElement {
     `;
   }
 
+  _renderVideo() {
+    return html`
+      <div class="video-container">
+        <canvas
+          class="video-canvas"
+          @ref=${(el) => {
+            if (el && el !== this._videoCanvas) {
+              this._videoCanvas = el;
+              this._videoContext = el.getContext("2d");
+              if (this._isOnline && !this._videoConnected && !this._videoConnecting) {
+                this._connectVideo();
+              }
+            }
+          }}
+        ></canvas>
+        ${!this._videoConnected ? html`
+          <div class="video-overlay">
+            ${this._videoConnecting ? html`
+              <div class="video-status">Connecting to video stream...</div>
+            ` : this._videoError ? html`
+              <div class="video-status" style="color: #f44336;">Error: ${this._videoError}</div>
+              <button class="video-button" @click=${() => this._connectVideo()}>Retry</button>
+            ` : html`
+              <div class="video-status">Video stream not connected</div>
+              ${this._isOnline ? html`
+                <button class="video-button" @click=${() => this._connectVideo()}>Connect</button>
+              ` : html`
+                <div class="video-status">Agent is offline</div>
+              `}
+            `}
+          </div>
+        ` : html`
+          <div class="video-controls" style="position: absolute; top: 8px; right: 8px;">
+            <button class="video-button" @click=${() => this._disconnectVideo()}>Disconnect</button>
+          </div>
+        `}
+      </div>
+    `;
+  }
+
+  async _connectVideo() {
+    if (!this._isOnline || this._videoConnecting || this._videoConnected) {
+      return;
+    }
+
+    this._videoConnecting = true;
+    this._videoError = null;
+    this.requestUpdate();
+
+    try {
+      const haId = this.hass.config?.location_name || this.config.entity || "home-assistant";
+      
+      // Create desktop session
+      await this.hass.callService("openctrol", "create_desktop_session", {
+        entity_id: this.config.entity,
+        ha_id: haId,
+        ttl_seconds: 900,
+      });
+
+      // Note: Video streaming requires WebSocket API support or entity state storage
+      // for session info. This is a placeholder implementation.
+      this._videoError = "Video streaming requires WebSocket API support. " +
+        "Session management is implemented but connection method needs configuration.";
+      this._videoConnecting = false;
+      this.requestUpdate();
+    } catch (err) {
+      console.error("Failed to connect video:", err);
+      this._videoError = err.message || "Connection failed";
+      this._videoConnecting = false;
+      this.requestUpdate();
+    }
+  }
+
+  async _connectVideoWebSocket(websocketUrl) {
+    try {
+      const ws = new WebSocket(websocketUrl);
+      
+      ws.onopen = () => {
+        this._videoConnected = true;
+        this._videoConnecting = false;
+        this.requestUpdate();
+      };
+      
+      ws.onmessage = (event) => {
+        const handleData = (data) => {
+          if (data instanceof ArrayBuffer) {
+            this._handleVideoFrame(new Uint8Array(data));
+          } else if (data instanceof Blob) {
+            data.arrayBuffer().then(buffer => {
+              this._handleVideoFrame(new Uint8Array(buffer));
+            }).catch(err => {
+              console.error("Error reading blob:", err);
+            });
+          }
+        };
+        
+        handleData(event.data);
+      };
+      
+      ws.onerror = () => {
+        this._videoError = "WebSocket connection error";
+        this._videoConnected = false;
+        this._videoConnecting = false;
+        this.requestUpdate();
+      };
+      
+      ws.onclose = () => {
+        this._videoConnected = false;
+        this.requestUpdate();
+      };
+      
+      this._videoWebSocket = ws;
+    } catch (err) {
+      console.error("Failed to create WebSocket:", err);
+      this._videoError = err.message || "Failed to create WebSocket connection";
+      this._videoConnecting = false;
+      this.requestUpdate();
+    }
+  }
+
+  _handleVideoFrame(data) {
+    if (!data || data.length < 16) return;
+    
+    try {
+      // Parse OFRA header: "OFRA" (4 bytes) + width (4) + height (4) + format (4)
+      const header = data.slice(0, 16);
+      const magic = String.fromCharCode(...header.slice(0, 4));
+      
+      if (magic !== "OFRA") return;
+      
+      const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+      const width = view.getUint32(4, true);
+      const height = view.getUint32(8, true);
+      const jpegData = data.slice(16);
+      
+      if (jpegData.length > 0) {
+        this._renderFrame(jpegData, width, height);
+      }
+    } catch (err) {
+      console.error("Error handling video frame:", err);
+    }
+  }
+
+  async _disconnectVideo() {
+    // Close WebSocket connection
+    if (this._videoWebSocket) {
+      this._videoWebSocket.close();
+      this._videoWebSocket = null;
+    }
+    
+    // End session via service call
+    if (this._videoSessionId) {
+      try {
+        await this.hass.callService("openctrol", "end_desktop_session", {
+          entity_id: this.config.entity,
+          session_id: this._videoSessionId,
+        });
+      } catch (err) {
+        console.error("Failed to end session:", err);
+      }
+      this._videoSessionId = null;
+    }
+    
+    this._videoConnected = false;
+    this.requestUpdate();
+  }
+
+  _renderFrame(jpegData, width, height) {
+    if (!this._videoCanvas || !this._videoContext || !jpegData || jpegData.length === 0) {
+      return;
+    }
+
+    try {
+      // Convert to base64
+      const binary = String.fromCharCode.apply(null, jpegData);
+      const base64 = btoa(binary);
+      const img = new Image();
+      
+      img.onload = () => {
+        if (!this._videoCanvas || !this._videoContext) return;
+        
+        // Resize canvas to container
+        const container = this._videoCanvas.parentElement;
+        if (container) {
+          this._videoCanvas.width = container.clientWidth;
+          this._videoCanvas.height = container.clientHeight;
+        }
+        
+        // Calculate aspect-preserving draw size
+        const canvasAspect = this._videoCanvas.width / this._videoCanvas.height;
+        const imgAspect = width / height;
+        
+        let drawWidth = this._videoCanvas.width;
+        let drawHeight = this._videoCanvas.height;
+        let offsetX = 0;
+        let offsetY = 0;
+
+        if (imgAspect > canvasAspect) {
+          drawHeight = this._videoCanvas.width / imgAspect;
+          offsetY = (this._videoCanvas.height - drawHeight) / 2;
+        } else {
+          drawWidth = this._videoCanvas.height * imgAspect;
+          offsetX = (this._videoCanvas.width - drawWidth) / 2;
+        }
+
+        this._videoContext.clearRect(0, 0, this._videoCanvas.width, this._videoCanvas.height);
+        this._videoContext.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+      };
+      
+      img.onerror = () => {
+        console.error("Error loading video frame");
+      };
+      
+      img.src = `data:image/jpeg;base64,${base64}`;
+    } catch (err) {
+      console.error("Error rendering frame:", err);
+    }
+  }
+
   _renderButtonRow() {
     return html`
       <div class="button-row">
@@ -868,6 +1337,8 @@ class OpenctrolCard extends LitElement {
     const rdState = this._entity?.attributes?.remote_desktop_state || "unknown";
     const rdDesktopState = this._entity?.attributes?.remote_desktop_desktop_state || "unknown";
     const rdRunning = this._entity?.attributes?.remote_desktop_is_running || false;
+    const monitors = this._entity?.attributes?.available_monitors || [];
+    const selectedMonitorId = this._entity?.attributes?.selected_monitor_id || "";
     
     return html`
       <div class="panel">
@@ -877,20 +1348,35 @@ class OpenctrolCard extends LitElement {
         </div>
         <div class="panel-section">
           <div class="section-title">Monitor Selection</div>
-          <input
-            type="text"
-            class="monitor-input"
-            placeholder="Monitor ID (e.g., DISPLAY1)"
-            @change=${(e) => {
-              const monitorId = e.target.value.trim();
-              if (monitorId) {
-                this._handleSelectMonitor(monitorId);
-              }
-            }}
-          />
-          <div class="info-text">
-            Enter the monitor ID to select. Common values: DISPLAY1, DISPLAY2, etc.
-          </div>
+          ${monitors.length > 0 ? html`
+            <div class="monitor-list">
+              ${monitors.map(monitor => html`
+                <button
+                  class="monitor-button ${monitor.id === selectedMonitorId ? "active" : ""}"
+                  @click=${() => this._handleSelectMonitor(monitor.id)}
+                  ?disabled=${!this._isOnline}
+                >
+                  <div class="monitor-button-content">
+                    <div class="monitor-name">${monitor.name || monitor.id}</div>
+                    <div class="monitor-details">
+                      ${monitor.resolution || `${monitor.width}x${monitor.height}`}
+                      ${monitor.is_primary ? html`<span class="primary-badge">Primary</span>` : ""}
+                    </div>
+                  </div>
+                  ${monitor.id === selectedMonitorId ? html`<span class="selected-indicator">✓</span>` : ""}
+                </button>
+              `)}
+            </div>
+            ${selectedMonitorId ? html`
+              <div class="info-text">
+                Currently selected: <strong>${selectedMonitorId}</strong>
+              </div>
+            ` : ""}
+          ` : html`
+            <div class="info-text">
+              No monitors available. ${this._isOnline ? "Please wait for monitor list to load." : "Agent is offline."}
+            </div>
+          `}
         </div>
         <div class="panel-section">
           <div class="section-title">Remote Desktop Status</div>
@@ -1054,6 +1540,8 @@ class OpenctrolCard extends LitElement {
   }
 
   _renderSoundPanel() {
+    const audioDevices = this._entity?.attributes?.audio_devices || [];
+    
     return html`
       <div class="panel">
         <div class="panel-header">
@@ -1070,37 +1558,73 @@ class OpenctrolCard extends LitElement {
               max="100"
               .value=${this._masterVolume}
               @input=${this._handleMasterVolumeChange}
+              ?disabled=${!this._isOnline}
             />
             <span class="volume-value">${this._masterVolume}%</span>
             <button
               class="mute-button ${this._masterMuted ? "muted" : ""}"
               @click=${this._handleMuteToggle}
+              ?disabled=${!this._isOnline}
             >
               ${this._masterMuted ? "🔇 Muted" : "🔊 Unmuted"}
             </button>
           </div>
         </div>
         <div class="panel-section">
-          <div class="section-title">Device Controls</div>
-          <div class="info-text">
-            Device-level controls will be available when audio device information is exposed via Home Assistant entities or attributes.
-          </div>
-          <input
-            type="text"
-            class="monitor-input"
-            placeholder="Device ID (manual entry)"
-            @change=${(e) => {
-              const deviceId = e.target.value.trim();
-              if (deviceId && this._isOnline) {
-                this.hass.callService("openctrol", "set_default_output_device", {
-                  entity_id: this.config.entity,
-                  device_id: deviceId,
-                }).catch((err) => {
-                  console.error("Failed to set default device:", err);
-                });
-              }
-            }}
-          />
+          <div class="section-title">Audio Devices</div>
+          ${audioDevices.length > 0 ? html`
+            <div class="device-list">
+              ${audioDevices.map(device => html`
+                <div class="device-item">
+                  <div class="device-header">
+                    <div class="device-name">
+                      ${device.name || device.id}
+                      ${device.is_default ? html`<span class="default-badge">Default</span>` : ""}
+                    </div>
+                  </div>
+                  <div class="device-controls">
+                    <input
+                      type="range"
+                      class="volume-slider device-slider"
+                      min="0"
+                      max="100"
+                      .value=${Math.round(device.volume || 0)}
+                      @input=${(e) => {
+                        const volume = parseInt(e.target.value, 10);
+                        this._handleDeviceVolumeChange(device.id, volume, device.muted);
+                      }}
+                      ?disabled=${!this._isOnline}
+                    />
+                    <span class="volume-value device-volume">${Math.round(device.volume || 0)}%</span>
+                    <button
+                      class="mute-button device-mute ${device.muted ? "muted" : ""}"
+                      @click=${() => {
+                        this._handleDeviceVolumeChange(device.id, device.volume, !device.muted);
+                      }}
+                      ?disabled=${!this._isOnline}
+                    >
+                      ${device.muted ? "🔇" : "🔊"}
+                    </button>
+                    ${!device.is_default ? html`
+                      <button
+                        class="action-button set-default-button"
+                        @click=${() => {
+                          this._handleSetDefaultDevice(device.id);
+                        }}
+                        ?disabled=${!this._isOnline}
+                      >
+                        Set Default
+                      </button>
+                    ` : ""}
+                  </div>
+                </div>
+              `)}
+            </div>
+          ` : html`
+            <div class="info-text">
+              No audio devices available. ${this._isOnline ? "Please wait for device list to load." : "Agent is offline."}
+            </div>
+          `}
         </div>
       </div>
     `;
@@ -1147,6 +1671,16 @@ class OpenctrolCard extends LitElement {
   render() {
     if (!this.config || !this.hass) {
       return html`<ha-card><div class="error-message">Card not configured</div></ha-card>`;
+    }
+
+    if (!this.config?.entity) {
+      return html`
+        <ha-card>
+          <div class="error-message">
+            Entity not configured. Please configure the entity in the card settings.
+          </div>
+        </ha-card>
+      `;
     }
 
     if (!this._entity) {

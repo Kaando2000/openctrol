@@ -146,7 +146,8 @@ send_key_combo:
       description: Array of key names to press simultaneously (e.g., ["CTRL", "ALT", "DEL"]).
       required: true
       selector:
-        object:
+        text:
+          multiple: true
 
 send_pointer_event:
   name: Send Pointer Event
@@ -192,4 +193,52 @@ send_pointer_event:
             - left
             - right
             - middle
+
+create_desktop_session:
+  name: Create Desktop Session
+  description: Create a desktop session for video streaming.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    ha_id:
+      name: Home Assistant ID
+      description: Home Assistant installation identifier.
+      required: false
+      selector:
+        text:
+    ttl_seconds:
+      name: TTL Seconds
+      description: Session time-to-live in seconds (60-3600).
+      required: false
+      selector:
+        number:
+          min: 60
+          max: 3600
+          step: 1
+          unit_of_measurement: "s"
+
+end_desktop_session:
+  name: End Desktop Session
+  description: End a desktop session and close video stream.
+  fields:
+    entity_id:
+      name: Entity
+      description: The Openctrol status sensor entity to target.
+      required: true
+      selector:
+        entity:
+          domain: sensor
+          integration: openctrol
+    session_id:
+      name: Session ID
+      description: The session ID to end.
+      required: true
+      selector:
+        text:
 

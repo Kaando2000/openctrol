@@ -63,9 +63,6 @@ public sealed class ConfigSummaryDto
     
     [JsonPropertyName("api_key_configured")]
     public bool ApiKeyConfigured { get; init; }
-    
-    [JsonPropertyName("allowed_ha_ids")]
-    public IList<string> AllowedHaIds { get; init; } = new List<string>();
 }
 
 public sealed class UiConfigDto
@@ -81,9 +78,6 @@ public sealed class UiConfigDto
     
     [JsonPropertyName("api_key_configured")]
     public bool ApiKeyConfigured { get; init; }
-    
-    [JsonPropertyName("allowed_ha_ids")]
-    public IList<string> AllowedHaIds { get; init; } = new List<string>();
     
     [JsonPropertyName("allow_empty_api_key")]
     public bool AllowEmptyApiKey { get; init; }
@@ -105,9 +99,6 @@ public sealed class UiConfigUpdateRequest
     
     [JsonPropertyName("api_key")]
     public string? ApiKey { get; init; }
-    
-    [JsonPropertyName("allowed_ha_ids")]
-    public IList<string>? AllowedHaIds { get; init; }
     
     [JsonPropertyName("allow_empty_api_key")]
     public bool? AllowEmptyApiKey { get; init; }

@@ -1,13 +1,14 @@
 """Config flow for Openctrol integration."""
 
-from typing import Any
+import logging
+from typing import Any, Dict, Optional
 
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+
+_LOGGER = logging.getLogger(__name__)
 
 from .api import OpenctrolApiClient, OpenctrolApiError
 from .const import (
@@ -22,44 +23,60 @@ from .const import (
 )
 
 
-class OpenctrolConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
+class OpenctrolConfigFlow(config_entries.ConfigFlow):
     """Handle a config flow for Openctrol."""
 
     VERSION = 1
 
     async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
+        self, user_input: Optional[Dict[str, Any]] = None
+    ):
         """Handle the initial step."""
-        errors: dict[str, str] = {}
+        errors: Dict[str, str] = {}
 
         if user_input is not None:
-            try:
-                # Validate connection by calling health endpoint
-                session = async_get_clientsession(self.hass)
-                client = OpenctrolApiClient(
-                    session=session,
-                    host=user_input[CONF_HOST],
-                    port=user_input[CONF_PORT],
-                    use_ssl=user_input.get(CONF_USE_SSL, DEFAULT_USE_SSL),
-                    api_key=user_input.get(CONF_API_KEY) or None,
-                )
-                await client.async_get_health()
+            # Validate required fields
+            host = user_input.get(CONF_HOST, "").strip()
+            port = user_input.get(CONF_PORT, DEFAULT_PORT)
+            
+            if not host:
+                errors[CONF_HOST] = "required"
+            if not isinstance(port, int) or port <= 0:
+                errors[CONF_PORT] = "invalid"
+            
+            if not errors:
+                # Check for existing entries with same host and port
+                await self.async_set_unique_id(f"{host}:{port}")
+                self._abort_if_unique_id_configured()
 
-                # Create config entry
-                return self.async_create_entry(
-                    title=user_input.get("name", DEFAULT_NAME),
-                    data={
-                        CONF_HOST: user_input[CONF_HOST],
-                        CONF_PORT: user_input[CONF_PORT],
-                        CONF_USE_SSL: user_input.get(CONF_USE_SSL, DEFAULT_USE_SSL),
-                        CONF_API_KEY: user_input.get(CONF_API_KEY) or "",
-                    },
-                )
-            except OpenctrolApiError:
-                errors["base"] = "cannot_connect"
-            except Exception:
-                errors["base"] = "unknown"
+                try:
+                    # Validate connection by calling health endpoint
+                    session = async_get_clientsession(self.hass)
+                    client = OpenctrolApiClient(
+                        session=session,
+                        host=host,
+                        port=port,
+                        use_ssl=user_input.get(CONF_USE_SSL, DEFAULT_USE_SSL),
+                        api_key=user_input.get(CONF_API_KEY) or None,
+                    )
+                    await client.async_get_health()
+
+                    # Create config entry
+                    return self.async_create_entry(
+                        title=user_input.get("name", DEFAULT_NAME),
+                        data={
+                            CONF_HOST: host,
+                            CONF_PORT: port,
+                            CONF_USE_SSL: user_input.get(CONF_USE_SSL, DEFAULT_USE_SSL),
+                            CONF_API_KEY: user_input.get(CONF_API_KEY) or "",
+                        },
+                    )
+                except OpenctrolApiError as err:
+                    _LOGGER.error("Connection validation failed: %s", err)
+                    errors["base"] = "cannot_connect"
+                except Exception as err:
+                    _LOGGER.exception("Unexpected error during config flow: %s", err)
+                    errors["base"] = "unknown"
 
         data_schema = vol.Schema(
             {

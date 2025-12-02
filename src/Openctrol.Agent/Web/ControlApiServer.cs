@@ -275,12 +275,10 @@ public sealed class ControlApiServer : IControlApiServer
                     return Results.Json(new ErrorResponse { Error = "invalid_request", Details = "HA ID is required" }, statusCode: 400);
                 }
 
-                // Validate HA ID is allowed
-                if (!_securityManager.IsHaAllowed(request.HaId))
-                {
-                    _logger.Warn($"[Security] Rejected session creation request from unauthorized HA ID: {request.HaId}");
-                    return Results.Json(new ErrorResponse { Error = "unauthorized", Details = "HA ID not allowed" }, statusCode: 401);
-                }
+                // NOTE: HA installation ID allowlist is currently disabled by design.
+                // Authentication is enforced via API key + LAN/localhost checks only.
+                // This call is kept for informational logging purposes only.
+                _securityManager.IsHaAllowed(request.HaId);
 
                 var ttl = TimeSpan.FromSeconds(Math.Max(60, Math.Min(3600, request.TtlSeconds))); // Clamp between 60s and 1h
                 var token = _securityManager.IssueDesktopSessionToken(request.HaId, ttl);
@@ -1738,8 +1736,7 @@ public sealed class ControlApiServer : IControlApiServer
                     {
                         Port = config.HttpPort,
                         UseHttps = !string.IsNullOrEmpty(config.CertPath),
-                        ApiKeyConfigured = !string.IsNullOrEmpty(config.ApiKey),
-                        AllowedHaIds = config.AllowedHaIds?.ToList() ?? new List<string>()
+                        ApiKeyConfigured = !string.IsNullOrEmpty(config.ApiKey)
                     }
                 };
 
@@ -1770,7 +1767,6 @@ public sealed class ControlApiServer : IControlApiServer
                     UseHttps = !string.IsNullOrEmpty(config.CertPath),
                     CertPath = config.CertPath ?? "",
                     ApiKeyConfigured = !string.IsNullOrEmpty(config.ApiKey),
-                    AllowedHaIds = config.AllowedHaIds?.ToList() ?? new List<string>(),
                     AllowEmptyApiKey = string.IsNullOrEmpty(config.ApiKey), // If empty, it's allowed
                     RequireAuthForHealth = false // Health endpoint doesn't require auth currently
                 };
@@ -1854,11 +1850,8 @@ public sealed class ControlApiServer : IControlApiServer
                     }
                 }
 
-                // Update allowed HA IDs
-                if (request.AllowedHaIds != null)
-                {
-                    currentConfig.AllowedHaIds = request.AllowedHaIds;
-                }
+                // NOTE: AllowedHaIds is deprecated and no longer used. Ignoring any values in request.
+                // Authentication is based on API key + LAN/localhost only.
 
                 // Ensure AgentId is set
                 if (string.IsNullOrEmpty(currentConfig.AgentId))
@@ -1866,7 +1859,7 @@ public sealed class ControlApiServer : IControlApiServer
                     currentConfig.AgentId = Guid.NewGuid().ToString();
                 }
 
-                // Ensure AllowedHaIds is not null
+                // Ensure AllowedHaIds is not null (for backward compatibility with existing config files)
                 if (currentConfig.AllowedHaIds == null)
                 {
                     currentConfig.AllowedHaIds = new List<string>();
@@ -2357,10 +2350,6 @@ public sealed class ControlApiServer : IControlApiServer
                     <div class=""info-label"">API Key</div>
                     <div class=""info-value"" id=""configApiKey"">-</div>
                 </div>
-                <div class=""info-item"">
-                    <div class=""info-label"">Allowed HA IDs</div>
-                    <div class=""info-value"" id=""configHaIds"">-</div>
-                </div>
             </div>
             <button class=""btn btn-secondary"" onclick=""toggleConfigForm()"">Edit Config</button>
             <div id=""configForm"" class=""hidden"" style=""margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb;"">
@@ -2378,10 +2367,6 @@ public sealed class ControlApiServer : IControlApiServer
                     <div class=""form-group"" id=""certPathGroup"">
                         <label>Certificate Path</label>
                         <input type=""text"" id=""formCertPath"" placeholder=""C:\\path\\to\\cert.pfx"">
-                    </div>
-                    <div class=""form-group"">
-                        <label>Allowed HA IDs (comma-separated)</label>
-                        <textarea id=""formHaIds"" rows=""3"" placeholder=""home-assistant-1, home-assistant-2""></textarea>
                     </div>
                     <div class=""form-group"">
                         <label>New API Key (leave empty to keep current)</label>
@@ -2466,9 +2451,6 @@ function updateUI() {
     document.getElementById('configPort').textContent = statusData.config.port;
     document.getElementById('configHttps').textContent = statusData.config.use_https ? 'Yes' : 'No';
     document.getElementById('configApiKey').textContent = statusData.config.api_key_configured ? 'Configured' : 'Not set';
-    document.getElementById('configHaIds').textContent = statusData.config.allowed_ha_ids.length > 0 
-        ? statusData.config.allowed_ha_ids.join(', ') 
-        : 'None (deny all)';
 }
 
 function populateConfigForm() {
@@ -2476,7 +2458,6 @@ function populateConfigForm() {
     document.getElementById('formPort').value = configData.port;
     document.getElementById('formUseHttps').checked = configData.use_https;
     document.getElementById('formCertPath').value = configData.cert_path || '';
-    document.getElementById('formHaIds').value = configData.allowed_ha_ids.join(', ');
     document.getElementById('formApiKey').value = '';
     updateCertPathVisibility();
 }
@@ -2504,7 +2485,6 @@ async function saveConfig(event) {
         port: parseInt(document.getElementById('formPort').value),
         use_https: document.getElementById('formUseHttps').checked,
         cert_path: document.getElementById('formCertPath').value,
-        allowed_ha_ids: document.getElementById('formHaIds').value.split(',').map(s => s.trim()).filter(s => s),
         api_key: document.getElementById('formApiKey').value || null
     };
 
