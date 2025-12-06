@@ -151,7 +151,7 @@ send_key_combo:
 
 send_pointer_event:
   name: Send Pointer Event
-  description: Send a pointer (mouse) event (move, click, or scroll).
+  description: Send a pointer (mouse) event (move, click, button, or scroll).
   fields:
     entity_id:
       name: Entity
@@ -163,13 +163,14 @@ send_pointer_event:
           integration: openctrol
     type:
       name: Type
-      description: Event type (move, click, or scroll).
+      description: Event type (move, click, button, or scroll).
       required: true
       selector:
         select:
           options:
             - move
             - click
+            - button
             - scroll
     dx:
       name: Delta X
@@ -185,7 +186,7 @@ send_pointer_event:
         number:
     button:
       name: Button
-      description: Mouse button (for click events).
+      description: Mouse button (for click/button events).
       required: false
       selector:
         select:
@@ -193,6 +194,16 @@ send_pointer_event:
             - left
             - right
             - middle
+    action:
+      name: Action
+      description: Button action (for button events: down, up, or click).
+      required: false
+      selector:
+        select:
+          options:
+            - down
+            - up
+            - click
 
 create_desktop_session:
   name: Create Desktop Session

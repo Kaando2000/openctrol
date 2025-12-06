@@ -155,20 +155,48 @@ async def _async_register_services(hass: HomeAssistant, entry: ConfigEntry) -> N
             # Handle button down/up events for toggle
             if event_type == "button":
                 button = call.data.get(ATTR_BUTTON)
-                # Card passes action as dx parameter, fallback to action field or default to "down"
-                action = call.data.get(ATTR_DX) or call.data.get("action", "down")
+                # Get action from explicit action field, fallback to dx parameter (legacy), or default to "down"
+                action = call.data.get("action") or call.data.get(ATTR_DX) or "down"
                 # Ensure action is a string
                 if not isinstance(action, str):
                     action = str(action)
-                # Use dx parameter to pass action for button events
+                # Pass action as explicit parameter (not via dx hack)
                 await ws_client.async_send_pointer_event(
                     "button",
-                    action,  # Pass action as dx parameter
-                    None,
+                    None,  # dx is not used for button events
+                    None,  # dy is not used for button events
                     button,
+                    action,  # Pass action as explicit parameter
                 )
             else:
-                # Ensure dx and dy are numbers (convert from string if needed)
+                # Check for absolute coordinates (x, y with absolute flag)
+                absolute = call.data.get("absolute", False)
+                if absolute and "x" in call.data and "y" in call.data:
+                    # Absolute positioning with normalized 0-65535 coordinates
+                    x = call.data.get("x")
+                    y = call.data.get("y")
+                    try:
+                        x = float(x) if x is not None else None
+                        y = float(y) if y is not None else None
+                    except (ValueError, TypeError):
+                        _LOGGER.warning("Invalid x/y values for absolute positioning: %s, %s", x, y)
+                        x = None
+                        y = None
+                    
+                    if x is not None and y is not None:
+                        await ws_client.async_send_pointer_event(
+                            event_type,
+                            x,  # Pass as dx for now (will be handled as absolute in ws.py)
+                            y,  # Pass as dy for now
+                            None,  # No button for move events
+                            None,  # No action for move events
+                            absolute,  # Pass absolute flag
+                            x,  # Pass x explicitly
+                            y,  # Pass y explicitly
+                        )
+                        return
+                
+                # Relative move: Ensure dx and dy are numbers (convert from string if needed)
                 dx = call.data.get(ATTR_DX)
                 dy = call.data.get(ATTR_DY)
                 if dx is not None:

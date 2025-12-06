@@ -20,6 +20,7 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
     private Thread? _captureThread;
     private CancellationTokenSource? _cancellationTokenSource;
     private CrossSessionCaptureContext? _captureContext;
+    private DesktopContextSwitcher? _desktopContextSwitcher;
     private volatile bool _isRunning;
     private DateTimeOffset _lastFrameAt;
     private long _sequenceNumber;
@@ -51,6 +52,7 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         _isRunning = true;
         _cancellationTokenSource = new CancellationTokenSource();
         _captureContext = new CrossSessionCaptureContext(_logger);
+        _desktopContextSwitcher = new DesktopContextSwitcher(_logger);
         _logger.Info("[RemoteDesktop] Starting with cross-session capture support...");
 
         // Hook into system state monitor to react to state changes
@@ -104,6 +106,8 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         // Dispose resources
         _captureContext?.Dispose();
         _captureContext = null;
+        _desktopContextSwitcher?.Dispose();
+        _desktopContextSwitcher = null;
         _cancellationTokenSource?.Dispose();
         _cancellationTokenSource = null;
 
@@ -138,10 +142,26 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         
         try
         {
-            // CRITICAL: Try multiple enumeration methods to ensure we detect ALL physical displays
-            // EnumDisplayMonitors should work from Session 0 when running as LocalSystem
-            // This API enumerates monitors from the active console session
-            var win32Monitors = EnumerateMonitorsWin32();
+            // CRITICAL: Switch to active desktop context before enumerating monitors
+            // This ensures EnumDisplayMonitors is called within the context of the active console session
+            SystemStateSnapshot? systemState = null;
+            if (_systemStateMonitor != null)
+            {
+                systemState = _systemStateMonitor.GetCurrent();
+            }
+
+            // Enumerate monitors within the active desktop context
+            List<MonitorInfo> win32Monitors;
+            if (_desktopContextSwitcher != null)
+            {
+                win32Monitors = _desktopContextSwitcher.ExecuteInActiveDesktopContext(
+                    () => EnumerateMonitorsWin32(),
+                    systemState) ?? new List<MonitorInfo>();
+            }
+            else
+            {
+                win32Monitors = EnumerateMonitorsWin32();
+            }
             if (win32Monitors.Count > 0)
             {
                 monitors.AddRange(win32Monitors);
@@ -153,9 +173,20 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             }
             
             // ALWAYS also try Screen.AllScreens to supplement - it may see displays differently
+            // This should also be called within the active desktop context
             try
             {
-                var screens = System.Windows.Forms.Screen.AllScreens;
+                System.Windows.Forms.Screen[] screens;
+                if (_desktopContextSwitcher != null)
+                {
+                    screens = _desktopContextSwitcher.ExecuteInActiveDesktopContext(
+                        () => System.Windows.Forms.Screen.AllScreens,
+                        systemState) ?? Array.Empty<System.Windows.Forms.Screen>();
+                }
+                else
+                {
+                    screens = System.Windows.Forms.Screen.AllScreens;
+                }
                 _logger.Debug($"[RemoteDesktop] Screen.AllScreens found {screens.Length} screen(s)");
                 
                 foreach (var screen in screens)
@@ -306,7 +337,17 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             // Fallback: Try Screen.AllScreens as standalone method
             try
             {
-                var screens = System.Windows.Forms.Screen.AllScreens;
+                System.Windows.Forms.Screen[] screens;
+                if (_desktopContextSwitcher != null)
+                {
+                    screens = _desktopContextSwitcher.ExecuteInActiveDesktopContext(
+                        () => System.Windows.Forms.Screen.AllScreens,
+                        systemState) ?? Array.Empty<System.Windows.Forms.Screen>();
+                }
+                else
+                {
+                    screens = System.Windows.Forms.Screen.AllScreens;
+                }
                 if (screens.Length > 0)
                 {
                     for (int i = 0; i < screens.Length; i++)
@@ -694,7 +735,8 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
 
         // Validate monitor exists
         var monitors = GetMonitors();
-        if (!monitors.Any(m => m.Id == monitorId))
+        var selectedMonitor = monitors.FirstOrDefault(m => m.Id == monitorId);
+        if (selectedMonitor == null)
         {
             _logger.Warn($"SelectMonitor called with invalid monitor ID: {monitorId}");
             return;
@@ -704,6 +746,54 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
         // Update input dispatcher with the selected monitor for accurate absolute positioning
         _inputDispatcher.SetCurrentMonitor(monitorId);
         _logger.Info($"[RemoteDesktop] Selected monitor: {monitorId}");
+
+        // CURSOR WARPING: Immediately after selecting a monitor, inject a synthetic absolute mouse move
+        // to center the cursor on that specific monitor. This ensures subsequent relative moves from
+        // the touchpad happen on the active screen, not a hidden one.
+        try
+        {
+            SystemStateSnapshot? systemState = null;
+            if (_systemStateMonitor != null)
+            {
+                systemState = _systemStateMonitor.GetCurrent();
+            }
+
+            // Calculate center of the selected monitor in virtual desktop coordinates
+            var centerX = selectedMonitor.X + (selectedMonitor.Width / 2);
+            var centerY = selectedMonitor.Y + (selectedMonitor.Height / 2);
+
+            // Warp cursor to center of selected monitor using absolute positioning
+            if (_desktopContextSwitcher != null)
+            {
+                _desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
+                {
+                    var warpEvent = new PointerEvent
+                    {
+                        Kind = PointerEventKind.MoveAbsolute,
+                        AbsoluteX = centerX,
+                        AbsoluteY = centerY
+                    };
+                    _inputDispatcher.DispatchPointer(warpEvent);
+                }, systemState);
+            }
+            else
+            {
+                var warpEvent = new PointerEvent
+                {
+                    Kind = PointerEventKind.MoveAbsolute,
+                    AbsoluteX = centerX,
+                    AbsoluteY = centerY
+                };
+                _inputDispatcher.DispatchPointer(warpEvent);
+            }
+
+            _logger.Debug($"[RemoteDesktop] Cursor warped to center of monitor {monitorId} at ({centerX}, {centerY})");
+        }
+        catch (Exception ex)
+        {
+            _logger.Warn($"[RemoteDesktop] Failed to warp cursor to monitor {monitorId}: {ex.Message}");
+            // Don't fail monitor selection if cursor warping fails
+        }
     }
 
     public string GetCurrentMonitorId()
@@ -929,28 +1019,43 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
             // - PrintWindow on desktop window (works across sessions as LocalSystem)
             // - Desktop switching with BitBlt
             // - Direct BitBlt fallback
-            using var bitmap = _captureContext.CaptureFrame(srcX, srcY, screenWidth, screenHeight, systemState);
+            // Ensure we're in the active desktop context before capturing
+            Bitmap? bitmap = null;
+            if (_desktopContextSwitcher != null)
+            {
+                bitmap = _desktopContextSwitcher.ExecuteInActiveDesktopContext(
+                    () => _captureContext.CaptureFrame(srcX, srcY, screenWidth, screenHeight, systemState),
+                    systemState);
+            }
+            else
+            {
+                bitmap = _captureContext.CaptureFrame(srcX, srcY, screenWidth, screenHeight, systemState);
+            }
+
             if (bitmap == null)
             {
                 return null;
             }
 
-            // Encode to JPEG
-            var jpegBytes = _captureContext.EncodeToJpeg(bitmap);
-            if (jpegBytes == null)
+            using (bitmap)
             {
-                return null;
-            }
+                // Encode to JPEG
+                var jpegBytes = _captureContext.EncodeToJpeg(bitmap);
+                if (jpegBytes == null)
+                {
+                    return null;
+                }
 
-            return new RemoteFrame
-            {
-                Width = screenWidth,
-                Height = screenHeight,
-                Format = FramePixelFormat.Jpeg,
-                Payload = new ReadOnlyMemory<byte>(jpegBytes),
-                SequenceNumber = _sequenceNumber,
-                Timestamp = DateTimeOffset.UtcNow
-            };
+                return new RemoteFrame
+                {
+                    Width = screenWidth,
+                    Height = screenHeight,
+                    Format = FramePixelFormat.Jpeg,
+                    Payload = new ReadOnlyMemory<byte>(jpegBytes),
+                    SequenceNumber = _sequenceNumber,
+                    Timestamp = DateTimeOffset.UtcNow
+                };
+            }
         }
         catch (Exception ex)
         {

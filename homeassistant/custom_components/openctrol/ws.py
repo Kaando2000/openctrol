@@ -346,8 +346,12 @@ class OpenctrolWsClient:
         dx: float | None = None,
         dy: float | None = None,
         button: Optional[str] = None,
+        action: Optional[str] = None,
+        absolute: bool = False,
+        x: float | None = None,
+        y: float | None = None,
     ) -> None:
-        """Send a pointer event (move, click, or scroll)."""
+        """Send a pointer event (move, click, button, or scroll)."""
         # Ensure connection with retry logic
         max_retries = 3
         retry_delay = 0.3
@@ -449,14 +453,25 @@ class OpenctrolWsClient:
         else:
             # Session-based endpoint format: {"type": "pointer_move", "dx": ..., "dy": ...}
             if event_type == "move":
-                if dx is None or dy is None:
-                    raise ValueError("dx and dy are required for move events")
-                # Ensure dx and dy are integers (agent expects integers)
-                message = {
-                    "type": "pointer_move",
-                    "dx": int(round(dx)),
-                    "dy": int(round(dy)),
-                }
+                # Check if this is an absolute move (with x, y, and absolute flag)
+                # Absolute moves use normalized 0-65535 coordinates
+                if absolute and x is not None and y is not None:
+                    # Send absolute move with normalized 0-65535 coordinates
+                    message = {
+                        "type": "pointer_move",
+                        "x": int(round(x)),
+                        "y": int(round(y)),
+                        "absolute": True,
+                    }
+                elif dx is not None and dy is not None:
+                    # Relative move
+                    message = {
+                        "type": "pointer_move",
+                        "dx": int(round(dx)),
+                        "dy": int(round(dy)),
+                    }
+                else:
+                    raise ValueError("dx and dy (or x, y with absolute) are required for move events")
             elif event_type == "click":
                 if button is None:
                     raise ValueError("button is required for click events")
@@ -483,21 +498,27 @@ class OpenctrolWsClient:
                 return
             elif event_type == "button":
                 # Handle button down/up for toggle functionality
-                # dx parameter contains the action ("down" or "up")
                 if button is None:
                     raise ValueError("button is required for button events")
-                # Ensure action is a valid string - dx can be "down", "up", or a string representation
-                action = "down"  # Default
-                if dx is not None:
+                # Use explicit action parameter if provided, otherwise default to "down"
+                # Legacy support: if action is not provided but dx is a string, use it (backward compatibility)
+                button_action = "down"  # Default
+                if action is not None:
+                    button_action = action.lower()
+                    if button_action not in ("down", "up", "click"):
+                        _LOGGER.warning("Invalid button action: %s, defaulting to 'down'", action)
+                        button_action = "down"
+                elif dx is not None:
+                    # Legacy support: dx parameter hack (for backward compatibility)
                     action_str = str(dx).lower()
-                    if action_str in ("down", "up"):
-                        action = action_str
+                    if action_str in ("down", "up", "click"):
+                        button_action = action_str
                     else:
-                        _LOGGER.warning("Invalid button action: %s, defaulting to 'down'", dx)
+                        _LOGGER.warning("Invalid button action in dx parameter: %s, defaulting to 'down'", dx)
                 message = {
                     "type": "pointer_button",
                     "button": button.lower(),
-                    "action": action,
+                    "action": button_action,
                 }
                 try:
                     message_json = json.dumps(message)

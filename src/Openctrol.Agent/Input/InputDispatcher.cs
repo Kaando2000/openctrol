@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using Openctrol.Agent.RemoteDesktop;
+using Openctrol.Agent.SystemState;
 using ILogger = Openctrol.Agent.Logging.ILogger;
 
 namespace Openctrol.Agent.Input;
@@ -6,12 +8,16 @@ namespace Openctrol.Agent.Input;
 public sealed class InputDispatcher
 {
     private readonly ILogger _logger;
+    private readonly ISystemStateMonitor? _systemStateMonitor;
+    private readonly DesktopContextSwitcher _desktopContextSwitcher;
     private readonly object _lock = new();
     private string _currentMonitorId = "DISPLAY1"; // Track current monitor for absolute positioning
 
-    public InputDispatcher(ILogger logger)
+    public InputDispatcher(ILogger logger, ISystemStateMonitor? systemStateMonitor = null)
     {
         _logger = logger;
+        _systemStateMonitor = systemStateMonitor;
+        _desktopContextSwitcher = new DesktopContextSwitcher(logger);
     }
 
     public void SetCurrentMonitor(string monitorId)
@@ -28,30 +34,41 @@ public sealed class InputDispatcher
         {
             try
             {
-                switch (evt.Kind)
+                // Get current system state for desktop context switching
+                SystemStateSnapshot? systemState = null;
+                if (_systemStateMonitor != null)
                 {
-                    case PointerEventKind.MoveRelative:
-                        MoveMouseRelative(evt.Dx, evt.Dy);
-                        break;
-
-                    case PointerEventKind.MoveAbsolute:
-                        if (evt.AbsoluteX.HasValue && evt.AbsoluteY.HasValue)
-                        {
-                            SetCursorPosition(evt.AbsoluteX.Value, evt.AbsoluteY.Value);
-                        }
-                        break;
-
-                    case PointerEventKind.Button:
-                        if (evt.Button.HasValue && evt.ButtonAction.HasValue)
-                        {
-                            SendMouseButton(evt.Button.Value, evt.ButtonAction.Value == MouseButtonAction.Down);
-                        }
-                        break;
-
-                    case PointerEventKind.Wheel:
-                        SendMouseWheel(evt.WheelDeltaX, evt.WheelDeltaY);
-                        break;
+                    systemState = _systemStateMonitor.GetCurrent();
                 }
+
+                // Execute input operations within the active desktop context
+                _desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
+                {
+                    switch (evt.Kind)
+                    {
+                        case PointerEventKind.MoveRelative:
+                            MoveMouseRelative(evt.Dx, evt.Dy);
+                            break;
+
+                        case PointerEventKind.MoveAbsolute:
+                            if (evt.AbsoluteX.HasValue && evt.AbsoluteY.HasValue)
+                            {
+                                SetCursorPosition(evt.AbsoluteX.Value, evt.AbsoluteY.Value);
+                            }
+                            break;
+
+                        case PointerEventKind.Button:
+                            if (evt.Button.HasValue && evt.ButtonAction.HasValue)
+                            {
+                                SendMouseButton(evt.Button.Value, evt.ButtonAction.Value == MouseButtonAction.Down);
+                            }
+                            break;
+
+                        case PointerEventKind.Wheel:
+                            SendMouseWheel(evt.WheelDeltaX, evt.WheelDeltaY);
+                            break;
+                    }
+                }, systemState);
             }
             catch (Exception ex)
             {
@@ -67,31 +84,42 @@ public sealed class InputDispatcher
             KeyModifiers modifiersToRelease = KeyModifiers.None;
             try
             {
-                switch (evt.Kind)
+                // Get current system state for desktop context switching
+                SystemStateSnapshot? systemState = null;
+                if (_systemStateMonitor != null)
                 {
-                    case KeyboardEventKind.KeyDown:
-                        if (evt.KeyCode.HasValue)
-                        {
-                            modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
-                            SendKeyDown(evt.KeyCode.Value, evt.Modifiers);
-                        }
-                        break;
-
-                    case KeyboardEventKind.KeyUp:
-                        if (evt.KeyCode.HasValue)
-                        {
-                            SendKeyUp(evt.KeyCode.Value, evt.Modifiers);
-                        }
-                        break;
-
-                    case KeyboardEventKind.Text:
-                        if (!string.IsNullOrEmpty(evt.Text))
-                        {
-                            modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
-                            SendText(evt.Text, evt.Modifiers);
-                        }
-                        break;
+                    systemState = _systemStateMonitor.GetCurrent();
                 }
+
+                // Execute keyboard operations within the active desktop context
+                _desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
+                {
+                    switch (evt.Kind)
+                    {
+                        case KeyboardEventKind.KeyDown:
+                            if (evt.KeyCode.HasValue)
+                            {
+                                modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
+                                SendKeyDown(evt.KeyCode.Value, evt.Modifiers);
+                            }
+                            break;
+
+                        case KeyboardEventKind.KeyUp:
+                            if (evt.KeyCode.HasValue)
+                            {
+                                SendKeyUp(evt.KeyCode.Value, evt.Modifiers);
+                            }
+                            break;
+
+                        case KeyboardEventKind.Text:
+                            if (!string.IsNullOrEmpty(evt.Text))
+                            {
+                                modifiersToRelease = evt.Modifiers; // Track modifiers to release on error
+                                SendText(evt.Text, evt.Modifiers);
+                            }
+                            break;
+                    }
+                }, systemState);
             }
             catch (Exception ex)
             {
@@ -101,7 +129,15 @@ public sealed class InputDispatcher
                 {
                     try
                     {
-                        ReleaseModifiers(modifiersToRelease);
+                        SystemStateSnapshot? systemState = null;
+                        if (_systemStateMonitor != null)
+                        {
+                            systemState = _systemStateMonitor.GetCurrent();
+                        }
+                        _desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
+                        {
+                            ReleaseModifiers(modifiersToRelease);
+                        }, systemState);
                     }
                     catch (Exception releaseEx)
                     {
@@ -165,8 +201,8 @@ public sealed class InputDispatcher
     private void SetCursorPosition(int x, int y)
     {
         // Use SendInput with MOUSEEVENTF.ABSOLUTE for proper multi-monitor and DPI support
-        // Coordinates from client are relative to the monitor being streamed
-        // Use the currently selected monitor's bounds to convert to virtual desktop coordinates
+        // Coordinates from client are normalized 0-65535 values that map to the selected monitor
+        // Map these normalized coordinates to the selected monitor's virtual screen bounds
         
         try
         {
@@ -207,19 +243,26 @@ public sealed class InputDispatcher
                 }
             }
 
-            // Validate and clamp coordinates to monitor bounds
-            // Prevent extreme values that could cause issues
+            // Input coordinates are normalized 0-65535 values
+            // Clamp to valid range
+            var normalizedX = Math.Clamp(x, 0, 65535);
+            var normalizedY = Math.Clamp(y, 0, 65535);
+
+            // Map normalized coordinates (0-65535) to the selected monitor's bounds
+            // 0,0 in normalized space maps to the top-left of the selected monitor
+            // 65535,65535 maps to the bottom-right of the selected monitor
             var monitorWidth = selectedScreen.Bounds.Width;
             var monitorHeight = selectedScreen.Bounds.Height;
-            var clampedX = Math.Clamp(x, 0, monitorWidth);
-            var clampedY = Math.Clamp(y, 0, monitorHeight);
             
-            // Client coordinates are relative to the streamed monitor
-            // Convert to virtual desktop coordinates using the selected monitor's bounds
-            var virtualX = selectedScreen.Bounds.X + clampedX;
-            var virtualY = selectedScreen.Bounds.Y + clampedY;
+            // Convert normalized coordinates to pixel coordinates within the selected monitor
+            var pixelX = (int)((normalizedX / 65535.0) * monitorWidth);
+            var pixelY = (int)((normalizedY / 65535.0) * monitorHeight);
+            
+            // Convert to virtual desktop coordinates
+            var virtualX = selectedScreen.Bounds.X + pixelX;
+            var virtualY = selectedScreen.Bounds.Y + pixelY;
 
-            // Get virtual desktop dimensions
+            // Get virtual desktop dimensions for final normalization
             var minX = virtualDesktop.Min(s => s.Bounds.Left);
             var minY = virtualDesktop.Min(s => s.Bounds.Top);
             var maxX = virtualDesktop.Max(s => s.Bounds.Right);
@@ -235,12 +278,12 @@ public sealed class InputDispatcher
 
             // Scale to 0-65535 range as required by SendInput with MOUSEEVENTF.ABSOLUTE
             // Normalize coordinates relative to virtual desktop
-            var normalizedX = (int)(((double)(virtualX - minX) / virtualWidth) * 65535);
-            var normalizedY = (int)(((double)(virtualY - minY) / virtualHeight) * 65535);
+            var finalNormalizedX = (int)(((double)(virtualX - minX) / virtualWidth) * 65535);
+            var finalNormalizedY = (int)(((double)(virtualY - minY) / virtualHeight) * 65535);
 
             // Clamp to valid range
-            normalizedX = Math.Max(0, Math.Min(65535, normalizedX));
-            normalizedY = Math.Max(0, Math.Min(65535, normalizedY));
+            finalNormalizedX = Math.Max(0, Math.Min(65535, finalNormalizedX));
+            finalNormalizedY = Math.Max(0, Math.Min(65535, finalNormalizedY));
 
             var input = new INPUT
             {
@@ -249,8 +292,8 @@ public sealed class InputDispatcher
                 {
                     mi = new MOUSEINPUT
                     {
-                        dx = normalizedX,
-                        dy = normalizedY,
+                        dx = finalNormalizedX,
+                        dy = finalNormalizedY,
                         dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE,
                         dwExtraInfo = IntPtr.Zero
                     }

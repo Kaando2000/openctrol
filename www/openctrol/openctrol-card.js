@@ -138,8 +138,12 @@ class OpenctrolCard extends LitElement {
         border-radius: 16px !important;
         margin: 24px !important;
         padding: 0 !important;
-        touch-action: none !important;
+        touch-action: none !important; /* CRITICAL: Prevents browser navigation gestures (back/forward swipe) */
+        -ms-touch-action: none !important; /* IE/Edge */
         user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
         overflow: hidden !important;
         display: block !important;
         visibility: visible !important;
@@ -212,6 +216,12 @@ class OpenctrolCard extends LitElement {
         display: block !important;
         visibility: visible !important;
         background: transparent !important;
+        touch-action: none !important; /* CRITICAL: Prevents browser navigation gestures */
+        -ms-touch-action: none !important; /* IE/Edge */
+        user-select: none !important;
+        -webkit-user-select: none !important;
+        -moz-user-select: none !important;
+        -ms-user-select: none !important;
       }
 
       .touchpad-overlay {
@@ -910,6 +920,8 @@ class OpenctrolCard extends LitElement {
     this._fullscreenContext = null;
     this._fullscreenWebSocket = null;
     this._fullscreenSessionId = null;
+    this._fullscreenDrawRegion = null; // Store draw region for touch coordinate mapping
+    this._videoDrawRegion = null; // Store draw region for regular video canvas
     this._leftClickHeld = false; // Track left click toggle state
     this._rightClickHeld = false; // Track right click toggle state
     this._leftClickTimeouts = new Map(); // Track left click timeouts for long press
@@ -1100,6 +1112,7 @@ class OpenctrolCard extends LitElement {
       time: Date.now(),
       moved: false,
       touchCount: touchCount,
+      totalDistance: 0, // Track total movement distance for pan detection
     };
     this._lastMove = { x: touch.clientX, y: touch.clientY };
   }
@@ -1108,12 +1121,20 @@ class OpenctrolCard extends LitElement {
     if (!this._isOnline || !this._touchStart) return;
     
     e.preventDefault();
+    e.stopPropagation(); // Prevent browser navigation gestures
     const touch = e.touches[0] || e.changedTouches[0];
     const touchCount = e.touches.length;
     const dx = touch.clientX - this._lastMove.x;
     const dy = touch.clientY - this._lastMove.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
     
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+    // Accumulate total movement distance
+    if (this._touchStart) {
+      this._touchStart.totalDistance += distance;
+    }
+    
+    // Movement threshold: if moved more than 5 pixels, consider it a pan
+    if (this._touchStart.totalDistance > 5 || Math.abs(dx) > 2 || Math.abs(dy) > 2) {
       this._touchStart.moved = true;
       this._lastMove = { x: touch.clientX, y: touch.clientY };
       
@@ -1137,28 +1158,46 @@ class OpenctrolCard extends LitElement {
   _handleTouchEnd(e) {
     if (!this._isOnline || !this._touchStart) return;
     
+    e.preventDefault();
+    e.stopPropagation(); // Prevent browser navigation gestures
     const touch = e.changedTouches[0];
     const duration = Date.now() - this._touchStart.time;
     const moved = this._touchStart.moved;
-    const touchCount = e.changedTouches.length;
+    // BUG FIX: Use touchCount from touchStart, not from changedTouches
+    // When two fingers are lifted, there are two separate touchend events,
+    // each with changedTouches.length = 1, so we need the original count
+    const touchCount = this._touchStart.touchCount || 1;
+    const totalDistance = this._touchStart.totalDistance || 0;
     
-    // Two-finger tap = right click
-    if (touchCount === 2 && !moved && duration < 300) {
-      this._sendPointerEvent("click", null, null, "right");
-    } else if (!moved && duration < 300) {
-      // Single tap - left click
-      this._sendPointerEvent("click", null, null, "left");
-    } else if (!moved && duration >= 300 && duration < 600) {
-      // Long press - treat as click for v1
-      this._sendPointerEvent("click", null, null, "left");
-    }
-    
-    this._touchStart = null;
-    this._lastMove = null;
+    // Clear move throttle
     if (this._moveThrottle) {
       clearTimeout(this._moveThrottle);
       this._moveThrottle = null;
     }
+    
+    // Differentiate between tap, long press, and pan:
+    // - Tap: < 300ms, < 5px movement, single finger
+    // - Long press: >= 300ms and < 1000ms, < 5px movement, single finger (right click)
+    // - Pan: any movement > 5px (already handled in _handleTouchMove)
+    
+    if (!moved && totalDistance < 5) {
+      // No significant movement - could be tap or long press
+      if (touchCount === 2 && duration < 300) {
+        // Two-finger tap = right click
+        this._sendPointerEvent("click", null, null, "right");
+      } else if (duration < 300) {
+        // Single tap (< 300ms) = left click
+        this._sendPointerEvent("click", null, null, "left");
+      } else if (duration >= 300 && duration < 1000) {
+        // Long press (300-1000ms) = right click
+        this._sendPointerEvent("click", null, null, "right");
+      }
+      // If duration >= 1000ms, ignore (likely accidental hold)
+    }
+    // If moved or totalDistance >= 5, it was a pan - already handled in _handleTouchMove
+    
+    this._touchStart = null;
+    this._lastMove = null;
   }
 
   async _sendPointerEvent(type, dx, dy, button) {
@@ -1208,6 +1247,41 @@ class OpenctrolCard extends LitElement {
     }
   }
 
+  async _sendPointerEventAbsolute(normalizedX, normalizedY) {
+    // Send absolute pointer move with normalized 0-65535 coordinates
+    if (!this._entity || !this._isOnline) {
+      console.warn("Cannot send absolute pointer event: entity not available or offline");
+      return;
+    }
+    
+    const data = {
+      entity_id: this.config.entity,
+      type: "move",
+      x: Math.round(normalizedX),
+      y: Math.round(normalizedY),
+      absolute: true, // Indicate this is absolute positioning
+    };
+    
+    // Retry logic for failed events
+    const maxRetries = 3;
+    let lastError = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await this.hass.callService("openctrol", "send_pointer_event", data);
+        return; // Success, exit retry loop
+      } catch (err) {
+        lastError = err;
+        const errorMsg = err.message || err.toString() || "Unknown error";
+        if (attempt < maxRetries - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        } else {
+          console.error(`Failed to send absolute pointer event after ${maxRetries} attempts:`, errorMsg);
+        }
+      }
+    }
+  }
+
   async _sendPointerButton(button, action) {
     // Send pointer button down/up for toggle functionality
     if (!this._entity || !this._isOnline) {
@@ -1219,7 +1293,7 @@ class OpenctrolCard extends LitElement {
       entity_id: this.config.entity,
       type: "button",
       button: button,
-      dx: action, // Pass action as dx parameter (hack for service call)
+      action: action, // Use explicit action parameter instead of dx hack
     };
     
     try {
@@ -1806,32 +1880,61 @@ class OpenctrolCard extends LitElement {
       img.onload = () => {
         if (!this._videoCanvas || !this._videoContext) return;
         
-        // Resize canvas to container
+        // Get container dimensions (actual visible area)
         const container = this._videoCanvas.parentElement;
-        if (container) {
-          this._videoCanvas.width = container.clientWidth;
-          this._videoCanvas.height = container.clientHeight;
-        }
+        if (!container) return;
         
-        // Calculate aspect-preserving draw size
-        const canvasAspect = this._videoCanvas.width / this._videoCanvas.height;
-        const imgAspect = width / height;
+        const containerWidth = container.clientWidth;
+        const containerHeight = container.clientHeight;
         
-        let drawWidth = this._videoCanvas.width;
-        let drawHeight = this._videoCanvas.height;
+        // Use the decoded image's actual dimensions (not the frame header dimensions)
+        // This ensures we use the active pixels, accounting for any JPEG encoding quirks
+        const imgWidth = img.naturalWidth || img.width || width;
+        const imgHeight = img.naturalHeight || img.height || height;
+        
+        // Calculate aspect ratios using actual image dimensions vs container
+        const imgAspect = imgWidth / imgHeight;
+        const containerAspect = containerWidth / containerHeight;
+        
+        // Set canvas to match container size exactly (no scaling)
+        // This ensures touch coordinates map 1:1 to the video feed
+        this._videoCanvas.width = containerWidth;
+        this._videoCanvas.height = containerHeight;
+        
+        // Calculate draw size to maintain aspect ratio while filling container
+        // Use letterboxing/pillarboxing to preserve aspect ratio
+        let drawWidth = containerWidth;
+        let drawHeight = containerHeight;
         let offsetX = 0;
         let offsetY = 0;
 
-        if (imgAspect > canvasAspect) {
-          drawHeight = this._videoCanvas.width / imgAspect;
-          offsetY = (this._videoCanvas.height - drawHeight) / 2;
+        if (imgAspect > containerAspect) {
+          // Image is wider than container - letterbox (black bars top/bottom)
+          drawHeight = containerWidth / imgAspect;
+          offsetY = (containerHeight - drawHeight) / 2;
         } else {
-          drawWidth = this._videoCanvas.height * imgAspect;
-          offsetX = (this._videoCanvas.width - drawWidth) / 2;
+          // Image is taller than container - pillarbox (black bars left/right)
+          drawWidth = containerHeight * imgAspect;
+          offsetX = (containerWidth - drawWidth) / 2;
         }
 
-        this._videoContext.clearRect(0, 0, this._videoCanvas.width, this._videoCanvas.height);
+        // Clear entire canvas (including black bars)
+        this._videoContext.fillStyle = "#000";
+        this._videoContext.fillRect(0, 0, containerWidth, containerHeight);
+        
+        // Draw image centered with aspect ratio preserved
         this._videoContext.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+        
+        // Store draw region for touch coordinate mapping
+        // Touch coordinates should map to the actual image area, not black bars
+        this._videoDrawRegion = {
+          x: offsetX,
+          y: offsetY,
+          width: drawWidth,
+          height: drawHeight,
+          imgWidth: imgWidth,
+          imgHeight: imgHeight
+        };
       };
       
       img.onerror = () => {
@@ -2203,17 +2306,58 @@ class OpenctrolCard extends LitElement {
     const handleMove = (e) => {
       if (!touchStart) return;
       e.preventDefault();
+      e.stopPropagation(); // Prevent browser navigation gestures
       const point = e.touches ? e.touches[0] : e;
-      const dx = point.clientX - lastMove.x;
-      const dy = point.clientY - lastMove.y;
-      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
-        touchStart.moved = true;
-        lastMove = { x: point.clientX, y: point.clientY };
-        if (moveThrottle) clearTimeout(moveThrottle);
-        moveThrottle = setTimeout(() => {
-          this._sendPointerEvent("move", dx, dy);
-          moveThrottle = null;
-        }, 16);
+      
+      // Calculate normalized absolute coordinates (0-65535) based on touch position
+      // relative to the fullscreen canvas, mapping to the actual image area (not black bars)
+      const canvas = this._fullscreenCanvas;
+      if (canvas && this._fullscreenDrawRegion) {
+        const rect = canvas.getBoundingClientRect();
+        const drawRegion = this._fullscreenDrawRegion;
+        
+        // Calculate touch position relative to canvas
+        const touchX = point.clientX - rect.left;
+        const touchY = point.clientY - rect.top;
+        
+        // Map touch coordinates to the actual image draw region (excluding black bars)
+        // If touch is outside the draw region, clamp to the nearest edge
+        const relativeX = Math.max(0, Math.min(drawRegion.width, touchX - drawRegion.x));
+        const relativeY = Math.max(0, Math.min(drawRegion.height, touchY - drawRegion.y));
+        
+        // Normalize to 0-65535 based on the image dimensions
+        const normalizedX = Math.round((relativeX / drawRegion.width) * 65535);
+        const normalizedY = Math.round((relativeY / drawRegion.height) * 65535);
+        
+        // Clamp to valid range
+        const clampedX = Math.max(0, Math.min(65535, normalizedX));
+        const clampedY = Math.max(0, Math.min(65535, normalizedY));
+        
+        const dx = point.clientX - lastMove.x;
+        const dy = point.clientY - lastMove.y;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+          touchStart.moved = true;
+          lastMove = { x: point.clientX, y: point.clientY };
+          if (moveThrottle) clearTimeout(moveThrottle);
+          moveThrottle = setTimeout(() => {
+            // Send absolute move with normalized coordinates
+            this._sendPointerEventAbsolute(clampedX, clampedY);
+            moveThrottle = null;
+          }, 16);
+        }
+      } else {
+        // Fallback to relative moves if canvas or draw region not available
+        const dx = point.clientX - lastMove.x;
+        const dy = point.clientY - lastMove.y;
+        if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+          touchStart.moved = true;
+          lastMove = { x: point.clientX, y: point.clientY };
+          if (moveThrottle) clearTimeout(moveThrottle);
+          moveThrottle = setTimeout(() => {
+            this._sendPointerEvent("move", dx, dy);
+            moveThrottle = null;
+          }, 16);
+        }
       }
     };
 
@@ -2222,9 +2366,47 @@ class OpenctrolCard extends LitElement {
       const point = e.changedTouches ? e.changedTouches[0] : e;
       const duration = Date.now() - touchStart.time;
       const moved = touchStart.moved;
+      
+      // For taps, calculate absolute position for click
+      // Map to the actual image area (not black bars)
       if (!moved && duration < 300) {
-        const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
-        this._sendPointerEvent("click", null, null, button);
+        const canvas = this._fullscreenCanvas;
+        if (canvas && this._fullscreenDrawRegion) {
+          const rect = canvas.getBoundingClientRect();
+          const drawRegion = this._fullscreenDrawRegion;
+          
+          // Calculate touch position relative to canvas
+          const touchX = point.clientX - rect.left;
+          const touchY = point.clientY - rect.top;
+          
+          // Map touch coordinates to the actual image draw region (excluding black bars)
+          const relativeX = Math.max(0, Math.min(drawRegion.width, touchX - drawRegion.x));
+          const relativeY = Math.max(0, Math.min(drawRegion.height, touchY - drawRegion.y));
+          
+          // Normalize to 0-65535 based on the image dimensions
+          const normalizedX = Math.round((relativeX / drawRegion.width) * 65535);
+          const normalizedY = Math.round((relativeY / drawRegion.height) * 65535);
+          const clampedX = Math.max(0, Math.min(65535, normalizedX));
+          const clampedY = Math.max(0, Math.min(65535, normalizedY));
+          
+          // BUG FIX: Await the absolute move before sending click
+          // _sendPointerEventAbsolute is async and has retry logic (up to 300ms),
+          // so we must await it to ensure cursor is positioned before clicking
+          (async () => {
+            try {
+              await this._sendPointerEventAbsolute(clampedX, clampedY);
+              // Small delay to ensure cursor positioning is processed
+              await new Promise(resolve => setTimeout(resolve, 50));
+              const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+              await this._sendPointerEvent("click", null, null, button);
+            } catch (err) {
+              console.error("Error sending absolute move and click:", err);
+            }
+          })();
+        } else {
+          const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+          this._sendPointerEvent("click", null, null, button);
+        }
       }
       touchStart = null;
       lastMove = null;
@@ -2413,26 +2595,49 @@ class OpenctrolCard extends LitElement {
         const canvas = this._fullscreenCanvas;
         const ctx = this._fullscreenContext;
         
-        // Calculate aspect ratio and draw
-        const imgAspect = width / height;
+        // Use the decoded image's actual dimensions (not the frame header dimensions)
+        // This ensures we use the active pixels, accounting for any JPEG encoding quirks
+        const imgWidth = img.naturalWidth || img.width || width;
+        const imgHeight = img.naturalHeight || img.height || height;
+        
+        // Calculate aspect ratios using actual image dimensions vs canvas
+        const imgAspect = imgWidth / imgHeight;
         const canvasAspect = canvas.width / canvas.height;
         
+        // Calculate draw size to maintain aspect ratio while filling canvas
+        // Use letterboxing/pillarboxing to preserve aspect ratio
         let drawWidth = canvas.width;
         let drawHeight = canvas.height;
         let offsetX = 0;
         let offsetY = 0;
         
         if (imgAspect > canvasAspect) {
+          // Image is wider than canvas - letterbox (black bars top/bottom)
           drawHeight = canvas.width / imgAspect;
           offsetY = (canvas.height - drawHeight) / 2;
         } else {
+          // Image is taller than canvas - pillarbox (black bars left/right)
           drawWidth = canvas.height * imgAspect;
           offsetX = (canvas.width - drawWidth) / 2;
         }
         
+        // Clear entire canvas (including black bars)
         ctx.fillStyle = "#000";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw image centered with aspect ratio preserved
         ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+        
+        // Store draw region for touch coordinate mapping in fullscreen mode
+        // Touch coordinates should map to the actual image area, not black bars
+        this._fullscreenDrawRegion = {
+          x: offsetX,
+          y: offsetY,
+          width: drawWidth,
+          height: drawHeight,
+          imgWidth: imgWidth,
+          imgHeight: imgHeight
+        };
       };
       
       img.onerror = () => {
