@@ -1,0 +1,29 @@
+# Example Lovelace Dashboard Configuration
+# This file provides a starting point for testing the Openctrol card
+# 
+# To use this:
+# 1. Start the Docker container
+# 2. Access Home Assistant at http://localhost:8123
+# 3. Configure the Openctrol integration (Settings → Devices & Services → Add Integration)
+# 4. Add the Openctrol card resource:
+#    - Go to Settings → Dashboards → Resources
+#    - Click "+ ADD RESOURCE"
+#    - URL: /local/openctrol/openctrol-card.js
+#    - Type: JavaScript Module
+# 5. Add a card to your dashboard with this configuration:
+#
+# type: custom:openctrol-card
+# entity: sensor.openctrol_agent_status
+#
+# Or use the example below in a manual dashboard
+
+title: Openctrol Test Dashboard
+views:
+  - title: Openctrol
+    path: openctrol
+    icon: mdi:remote
+    cards:
+      - type: custom:openctrol-card
+        entity: sensor.openctrol_agent_status
+        # Replace with your actual entity ID after configuring the integration
+

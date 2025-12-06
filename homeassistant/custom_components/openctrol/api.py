@@ -107,17 +107,19 @@ class OpenctrolApiClient:
         muted: Optional[bool] = None,
     ) -> None:
         """Set device volume and/or mute state."""
-        payload: Dict[str, Any] = {"device_id": device_id}
+        # Backend expects DeviceId (capital D and I), Volume, and Muted
+        payload: Dict[str, Any] = {"DeviceId": device_id}
         if volume is not None:
-            payload["volume"] = float(volume)  # API expects float
+            payload["Volume"] = float(volume)  # API expects float
         if muted is not None:
-            payload["muted"] = muted
+            payload["Muted"] = muted
         await self._post_json(f"{self.base_url}/api/v1/audio/device", payload)
 
     async def async_set_default_output_device(self, device_id: str) -> None:
         """Set default audio output device."""
+        # Backend expects DeviceId (capital D) but accepts case-insensitive JSON
         await self._post_json(
-            f"{self.base_url}/api/v1/audio/default", {"device_id": device_id}
+            f"{self.base_url}/api/v1/audio/default", {"DeviceId": device_id}
         )
 
     async def async_get_monitors(self) -> Dict[str, Any]:
@@ -126,8 +128,9 @@ class OpenctrolApiClient:
 
     async def async_select_monitor(self, monitor_id: str) -> None:
         """Select monitor for remote desktop capture."""
+        # Backend expects MonitorId (capital M) but accepts case-insensitive JSON
         await self._post_json(
-            f"{self.base_url}/api/v1/rd/monitor", {"monitor_id": monitor_id}
+            f"{self.base_url}/api/v1/rd/monitor", {"MonitorId": monitor_id}
         )
 
     async def async_create_desktop_session(
@@ -136,7 +139,8 @@ class OpenctrolApiClient:
         """Create a desktop session and return session details."""
         headers = self._get_headers()
         headers["Content-Type"] = "application/json"
-        payload = {"ha_id": ha_id, "ttl_seconds": ttl_seconds}
+        # Backend expects HaId (capital H and I) and TtlSeconds
+        payload = {"HaId": ha_id, "TtlSeconds": ttl_seconds}
         
         async with self._session.post(
             f"{self.base_url}/api/v1/sessions/desktop",

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "minor_version": 1,
+  "key": "lovelace_resources",
+  "data": {
+    "items": [
+      {
+        "id": "4bd52016b3ac439b914440d611e72a5f",
+        "url": "/local/openctrol/openctrol-card.js?v=0.7",
+        "type": "module"
+      }
+    ]
+  }
+}

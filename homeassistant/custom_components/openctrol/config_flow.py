@@ -23,7 +23,7 @@ from .const import (
 )
 
 
-class OpenctrolConfigFlow(config_entries.ConfigFlow):
+class OpenctrolConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
     """Handle a config flow for Openctrol."""
 
     VERSION = 1
@@ -33,6 +33,8 @@ class OpenctrolConfigFlow(config_entries.ConfigFlow):
     ):
         """Handle the initial step."""
         errors: Dict[str, str] = {}
+
+        _LOGGER.debug("Starting Openctrol config flow user step")
 
         if user_input is not None:
             # Validate required fields

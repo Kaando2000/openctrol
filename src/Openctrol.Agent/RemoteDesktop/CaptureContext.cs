@@ -1,6 +1,7 @@
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
+using Openctrol.Agent.SystemState;
 
 namespace Openctrol.Agent.RemoteDesktop;
 
@@ -76,7 +77,7 @@ internal sealed class CaptureContext : IDisposable
         return true;
     }
 
-    public Bitmap? CaptureFrame(int srcX, int srcY, int width, int height)
+    public Bitmap? CaptureFrame(int srcX, int srcY, int width, int height, SystemStateSnapshot? systemState = null)
     {
         if (_disposed || _hdcMem == IntPtr.Zero || _hBitmap == IntPtr.Zero)
         {
@@ -86,6 +87,9 @@ internal sealed class CaptureContext : IDisposable
         try
         {
             // Switch to the active console desktop before capture to handle login/locked screens
+            // This ensures we capture from the session that is currently receiving input:
+            // - Session 0: Login screen (Winlogon desktop)
+            // - Session 1+: User session (Default desktop)
             IntPtr hOriginalDesktop = IntPtr.Zero;
             IntPtr hInputDesktop = IntPtr.Zero;
             bool desktopSwitched = false;
@@ -97,8 +101,38 @@ internal sealed class CaptureContext : IDisposable
                 // Get current thread desktop
                 hOriginalDesktop = GetThreadDesktop(GetCurrentThreadId());
                 
-                // Try to open the input desktop (console/winlogon)
+                // Determine which desktop to capture from based on system state
+                // Priority: If user session is active (Session 1+), capture from user session
+                // Otherwise, capture from login screen (Session 0)
+                
+                bool captureFromUserSession = false;
+                if (systemState != null)
+                {
+                    // If we have an active user session (Session 1+) and desktop is active, capture from user session
+                    if (systemState.ActiveSessionId > 0 && 
+                        systemState.ActiveSessionId != unchecked((int)0xFFFFFFFF) &&
+                        systemState.DesktopState == DesktopState.Desktop)
+                    {
+                        captureFromUserSession = true;
+                    }
+                }
+                
+                // Try to open the input desktop first (this is the desktop receiving input)
+                // This will automatically be the active desktop (Winlogon for login, Default for user session)
                 hInputDesktop = OpenInputDesktop(0, false, DESKTOP_READOBJECTS | DESKTOP_SWITCHDESKTOP);
+                
+                // If OpenInputDesktop failed, try opening Default desktop for user sessions
+                if (hInputDesktop == IntPtr.Zero && captureFromUserSession)
+                {
+                    hInputDesktop = OpenDesktop("Default", 0, false, DESKTOP_READOBJECTS | DESKTOP_SWITCHDESKTOP);
+                }
+                
+                // If still failed and we need Winlogon (login screen), try opening it directly
+                if (hInputDesktop == IntPtr.Zero && !captureFromUserSession)
+                {
+                    hInputDesktop = OpenDesktop("Winlogon", 0, false, DESKTOP_READOBJECTS | DESKTOP_SWITCHDESKTOP);
+                }
+                
                 if (hInputDesktop != IntPtr.Zero)
                 {
                     // Switch thread to input desktop
@@ -137,8 +171,22 @@ internal sealed class CaptureContext : IDisposable
 
             try
             {
+                // IMPORTANT: For multi-monitor setups, srcX/srcY are in virtual desktop coordinates
+                // BitBlt with MOUSEEVENTF.ABSOLUTE coordinates requires conversion to normalized coordinates (0-65535)
+                // But we're using device coordinates here, so we use srcX/srcY directly
+                
                 // Capture screen to bitmap using the source DC (from switched desktop if successful)
-                BitBlt(_hdcMem, 0, 0, width, height, hdcSource, srcX, srcY, SRCCOPY);
+                // srcX/srcY are already in virtual desktop coordinates from monitor enumeration
+                bool bitBltResult = BitBlt(_hdcMem, 0, 0, width, height, hdcSource, srcX, srcY, SRCCOPY);
+                
+                if (!bitBltResult)
+                {
+                    // BitBlt failed - might be because we're not in the right session
+                    // Log error for debugging
+                    int error = Marshal.GetLastWin32Error();
+                    // Don't log every failure as it can spam logs, but capture the error for debugging
+                    return null;
+                }
                 
                 // Convert to managed Bitmap
                 return Image.FromHbitmap(_hBitmap);
@@ -265,6 +313,9 @@ internal sealed class CaptureContext : IDisposable
 
     [DllImport("user32.dll")]
     private static extern IntPtr OpenInputDesktop(uint dwFlags, bool fInherit, uint dwDesiredAccess);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr OpenDesktop(string lpszDesktop, uint dwFlags, bool fInherit, uint dwDesiredAccess);
 
     [DllImport("user32.dll")]
     private static extern IntPtr GetThreadDesktop(uint dwThreadId);

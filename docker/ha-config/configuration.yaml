@@ -1,0 +1,32 @@
+# Home Assistant Test Server Configuration
+# This is a minimal configuration for testing the Openctrol integration
+
+# Enable default integrations (includes http, frontend, etc.)
+default_config:
+
+# HTTP server configuration
+http:
+  use_x_forwarded_for: true
+  trusted_proxies:
+    - 127.0.0.1
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+    - 10.0.0.0/8
+
+# Enable history and recorder for entity state tracking
+recorder:
+  purge_keep_days: 1
+  commit_interval: 5
+
+history:
+
+# Logging configuration - enable debug logging for Openctrol integration
+logger:
+  default: info
+  logs:
+    custom_components.openctrol: debug
+
+# Lovelace configuration mode
+lovelace:
+  mode: yaml
+

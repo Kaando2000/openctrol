@@ -1518,7 +1518,29 @@ public sealed class ControlApiServer : IControlApiServer
                     }
                     else
                     {
-                        _logger.Warn($"[API] Unknown key name: {keyStr}");
+                        // Try single-character keys (A-Z, 0-9)
+                        if (keyUpper.Length == 1)
+                        {
+                            var ch = keyUpper[0];
+                            if (ch >= 'A' && ch <= 'Z')
+                            {
+                                // A-Z maps to virtual key codes 0x41-0x5A
+                                mainKeys.Add(ch);
+                            }
+                            else if (ch >= '0' && ch <= '9')
+                            {
+                                // 0-9 maps to virtual key codes 0x30-0x39
+                                mainKeys.Add(ch);
+                            }
+                            else
+                            {
+                                _logger.Warn($"[API] Unknown key name: {keyStr}");
+                            }
+                        }
+                        else
+                        {
+                            _logger.Warn($"[API] Unknown key name: {keyStr}");
+                        }
                     }
                     break;
             }
@@ -1565,9 +1587,11 @@ public sealed class ControlApiServer : IControlApiServer
             "TAB" => 0x09,
             "ENTER" => 0x0D,
             "ESC" => 0x1B,
+            "ESCAPE" => 0x1B,
             "SPACE" => 0x20,
             "BACKSPACE" => 0x08,
             "DEL" => 0x2E,
+            "DELETE" => 0x2E,
             "INSERT" => 0x2D,
             "HOME" => 0x24,
             "END" => 0x23,

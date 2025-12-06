@@ -60,7 +60,7 @@ param(
     [string]$CertPassword = "",
     [string]$ApiKey = "",
     [bool]$CreateFirewallRule = $true,
-    [string]$SourcePath = "E:\Proje\openctrol\src\Openctrol.Agent\bin\Release\net8.0-windows\win-x64\publish"
+    [string]$SourcePath = ""
 )
 
 $ErrorActionPreference = "Stop"

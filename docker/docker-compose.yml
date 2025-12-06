@@ -1,0 +1,21 @@
+services:
+  homeassistant:
+    image: homeassistant/home-assistant:stable
+    container_name: openctrol-ha-test
+    volumes:
+      # Mount the Openctrol integration for live development
+      - ../homeassistant/custom_components/openctrol:/config/custom_components/openctrol:ro
+      # Mount the Openctrol card for live development
+      - ../www/openctrol:/config/www/openctrol:ro
+      # Persistent Home Assistant configuration
+      - ./ha-data:/config
+    ports:
+      - "8123:8123"
+    environment:
+      - TZ=UTC
+    restart: unless-stopped
+    network_mode: bridge
+    extra_hosts:
+      # Allow container to access host machine (Windows/Mac)
+      - "host.docker.internal:host-gateway"
+

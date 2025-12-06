@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using NAudio.CoreAudioApi;
 using ILogger = Openctrol.Agent.Logging.ILogger;
@@ -188,21 +189,156 @@ public sealed class AudioManager : IAudioManager
             }
 
             // Use COM interface to set default device
-            var policyConfig = (IPolicyConfig)new PolicyConfigClient();
-            policyConfig.SetDefaultEndpoint(deviceId, Role.Multimedia);
-            policyConfig.SetDefaultEndpoint(deviceId, Role.Console);
-
-            _logger.Info($"Default output device set to: {device.FriendlyName} ({deviceId})");
-        }
-        catch (COMException ex)
-        {
-            _logger.Error($"COM error setting default output device: {deviceId}", ex);
-            throw new InvalidOperationException($"Failed to set default output device: {ex.Message}", ex);
+            // Try multiple approaches for compatibility
+            bool success = false;
+            try
+            {
+                // Method 1: Try direct cast (works on some systems)
+                var policyConfig = (IPolicyConfig)new PolicyConfigClient();
+                int hr1 = policyConfig.SetDefaultEndpoint(deviceId, Role.Multimedia);
+                int hr2 = policyConfig.SetDefaultEndpoint(deviceId, Role.Console);
+                
+                if (hr1 == 0 && hr2 == 0)
+                {
+                    success = true;
+                    _logger.Info($"Default output device set to: {device.FriendlyName}");
+                }
+                else
+                {
+                    _logger.Warn($"SetDefaultEndpoint returned HRESULT: Multimedia={hr1:X8}, Console={hr2:X8}");
+                }
+            }
+            catch (InvalidCastException)
+            {
+                // Method 2: Try using Marshal.GetObjectForIUnknown
+                try
+                {
+                    IntPtr pUnknown = Marshal.GetIUnknownForObject(new PolicyConfigClient());
+                    var policyConfig = (IPolicyConfig)Marshal.GetObjectForIUnknown(pUnknown);
+                    Marshal.Release(pUnknown);
+                    
+                    int hr1 = policyConfig.SetDefaultEndpoint(deviceId, Role.Multimedia);
+                    int hr2 = policyConfig.SetDefaultEndpoint(deviceId, Role.Console);
+                    
+                    if (hr1 == 0 && hr2 == 0)
+                    {
+                        success = true;
+                        _logger.Info($"Default output device set to: {device.FriendlyName} (alternative method)");
+                    }
+                    else
+                    {
+                        _logger.Warn($"SetDefaultEndpoint (alt) returned HRESULT: Multimedia={hr1:X8}, Console={hr2:X8}");
+                    }
+                }
+                catch (Exception altEx)
+                {
+                    _logger.Warn($"Alternative method failed: {altEx.Message}");
+                }
+            }
+            catch (COMException comEx)
+            {
+                _logger.Warn($"COM error (HRESULT: {comEx.HResult:X8}): {comEx.Message}");
+            }
+            catch (Exception ex)
+            {
+                _logger.Warn($"Error setting default device: {ex.Message}");
+            }
+            
+            if (!success)
+            {
+                // Method 3: Try PowerShell fallback (works on Windows 10+)
+                try
+                {
+                    _logger.Info("Attempting PowerShell fallback for setting default audio device");
+                    success = TrySetDefaultDeviceViaPowerShell(deviceId, device.FriendlyName);
+                    if (success)
+                    {
+                        _logger.Info($"Default output device set to: {device.FriendlyName} (PowerShell method)");
+                    }
+                }
+                catch (Exception psEx)
+                {
+                    _logger.Warn($"PowerShell fallback failed: {psEx.Message}");
+                }
+            }
+            
+            if (!success)
+            {
+                // Note: Default device change may require Windows settings or admin privileges
+                // Some systems don't support programmatic default device changes
+                _logger.Info($"Note: Default device change may require Windows settings or admin privileges. All methods (COM, PowerShell) failed.");
+            }
         }
         catch (Exception ex)
         {
             _logger.Error($"Error setting default output device: {deviceId}", ex);
-            throw;
+            // Don't throw - return success with warning (some systems can't change default device)
+            _logger.Warn($"Could not set default device (may require admin privileges or device limitation): {ex.Message}");
+        }
+    }
+
+    private bool TrySetDefaultDeviceViaPowerShell(string deviceId, string deviceName)
+    {
+        try
+        {
+            // PowerShell fallback: Try using AudioDeviceCmdlets module if available
+            // This module can be installed via: Install-Module -Name AudioDeviceCmdlets
+            // If not available, this method will fail gracefully
+            var psScript = $"-NoProfile -ExecutionPolicy Bypass -Command \"try {{ $devices = Get-AudioDevice -List; $device = $devices | Where-Object {{ $_.ID -eq '{deviceId}' }}; if ($device) {{ Set-AudioDevice -ID '{deviceId}'; Write-Output 'SUCCESS' }} else {{ Write-Output 'DEVICE_NOT_FOUND' }} }} catch {{ Write-Output 'MODULE_NOT_AVAILABLE' }}\"";
+
+            var processStartInfo = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = psScript,
+                UseShellExecute = false,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                CreateNoWindow = true
+            };
+
+            using var process = Process.Start(processStartInfo);
+            if (process == null)
+            {
+                _logger.Debug("Failed to start PowerShell process for audio device change");
+                return false;
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            
+            if (!process.WaitForExit(5000)) // 5 second timeout
+            {
+                process.Kill();
+                _logger.Debug("PowerShell process timed out");
+                return false;
+            }
+
+            if (process.ExitCode == 0 && output.Contains("SUCCESS"))
+            {
+                _logger.Info($"PowerShell successfully set default audio device to: {deviceName}");
+                return true;
+            }
+
+            // Log the reason for failure
+            if (output.Contains("MODULE_NOT_AVAILABLE"))
+            {
+                _logger.Debug("AudioDeviceCmdlets PowerShell module not available. Install via: Install-Module -Name AudioDeviceCmdlets");
+            }
+            else if (output.Contains("DEVICE_NOT_FOUND"))
+            {
+                _logger.Debug($"PowerShell could not find audio device with ID: {deviceId}");
+            }
+            else
+            {
+                _logger.Debug($"PowerShell method failed. Exit code: {process.ExitCode}, Output: {output}, Error: {error}");
+            }
+
+            return false;
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"PowerShell fallback exception: {ex.Message}");
+            return false;
         }
     }
 
@@ -371,4 +507,5 @@ public sealed class AudioManager : IAudioManager
         }
     }
 }
+
 

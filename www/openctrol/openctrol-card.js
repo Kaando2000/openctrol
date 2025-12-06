@@ -26,6 +26,8 @@ class OpenctrolCard extends LitElement {
       _lastMove: { state: true },
       _scrollMode: { state: true },
       _powerConfirm: { state: true },
+      _isMobile: { state: true },
+      _mobileKeyboardVisible: { state: true },
     };
   }
 
@@ -33,7 +35,7 @@ class OpenctrolCard extends LitElement {
     return css`
       :host {
         display: block;
-        padding: 16px;
+        padding: 0;
         font-family: var(--ha-card-header-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Helvetica Neue", sans-serif);
       }
 
@@ -42,13 +44,14 @@ class OpenctrolCard extends LitElement {
         border-radius: var(--ha-card-border-radius, 4px);
         box-shadow: var(--ha-card-box-shadow, 0 2px 4px rgba(0,0,0,0.1);
         overflow: hidden;
+        padding: 0;
       }
 
       .top-bar {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 12px 16px;
+        padding: 16px 24px;
         background: var(--ha-card-header-background, var(--primary-color));
         color: var(--ha-card-header-color, white);
         border-bottom: 1px solid rgba(0,0,0,0.1);
@@ -125,16 +128,75 @@ class OpenctrolCard extends LitElement {
       }
 
       .touchpad-container {
-        position: relative;
-        width: 100%;
-        height: 400px;
-        background: #f5f5f5;
-        border: 2px solid #e0e0e0;
-        border-radius: 8px;
-        margin: 16px;
-        touch-action: none;
-        user-select: none;
-        overflow: hidden;
+        position: relative !important;
+        width: calc(100% - 48px) !important;
+        height: 400px !important;
+        min-height: 400px !important;
+        max-height: 400px !important;
+        background: linear-gradient(135deg, #f0f0f0 0%, #e0e0e0 100%) !important;
+        border: 3px solid #c8c8c8 !important;
+        border-radius: 16px !important;
+        margin: 24px !important;
+        padding: 0 !important;
+        touch-action: none !important;
+        user-select: none !important;
+        overflow: hidden !important;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 1 !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
+        flex-grow: 0 !important;
+        box-shadow: inset 0 4px 12px rgba(0,0,0,0.15), 0 2px 6px rgba(0,0,0,0.1) !important;
+      }
+      
+      /* Ensure parent card doesn't hide touchpad */
+      ha-card {
+        display: block !important;
+      }
+      
+      ha-card .card {
+        display: flex !important;
+        flex-direction: column !important;
+        min-height: 500px !important;
+      }
+      
+      ha-card .card > * {
+        flex-shrink: 0 !important;
+      }
+      
+      /* Force touchpad container to be visible - override any other styles */
+      ha-card .touchpad-container,
+      .touchpad-container,
+      ha-card .card .touchpad-container {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        height: 400px !important;
+        min-height: 400px !important;
+        max-height: 400px !important;
+        width: calc(100% - 32px) !important;
+        margin: 16px !important;
+        padding: 0 !important;
+        background: #f5f5f5 !important;
+        border: 2px solid #e0e0e0 !important;
+        border-radius: 8px !important;
+        position: relative !important;
+        box-sizing: border-box !important;
+        flex-shrink: 0 !important;
+        flex-grow: 0 !important;
+      }
+      
+      /* Ensure touchpad inner element is visible */
+      .touchpad-container .touchpad,
+      ha-card .touchpad-container .touchpad {
+        display: block !important;
+        visibility: visible !important;
+        width: 100% !important;
+        height: 100% !important;
+        position: relative !important;
+        background: transparent !important;
       }
 
       .touchpad-container.offline {
@@ -143,9 +205,13 @@ class OpenctrolCard extends LitElement {
       }
 
       .touchpad {
-        width: 100%;
-        height: 100%;
-        position: relative;
+        width: 100% !important;
+        height: 100% !important;
+        min-height: 100% !important;
+        position: relative !important;
+        display: block !important;
+        visibility: visible !important;
+        background: transparent !important;
       }
 
       .touchpad-overlay {
@@ -163,9 +229,83 @@ class OpenctrolCard extends LitElement {
 
       .button-row {
         display: flex;
-        gap: 8px;
-        padding: 0 16px 16px;
+        gap: 16px;
+        padding: 0 24px 24px;
         justify-content: center;
+        align-items: center;
+        flex-wrap: wrap;
+      }
+
+      .click-button {
+        flex: 2;
+        min-width: 200px;
+        padding: 36px 48px;
+        border-radius: 20px;
+        border: 2px solid #c0c0c0;
+        background: linear-gradient(135deg, #f5f5f5 0%, #e5e5e5 100%);
+        color: #333;
+        font-size: 17px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 12px;
+        position: relative;
+        box-shadow: inset 0 3px 6px rgba(0,0,0,0.12), 0 2px 4px rgba(0,0,0,0.08);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      }
+      
+      .scroll-move-button {
+        flex: 1;
+        min-width: 120px;
+        max-width: 160px;
+        padding: 24px 28px;
+        border-radius: 14px;
+        border: 2px solid var(--primary-color);
+        background: white;
+        color: var(--primary-color);
+        font-size: 14px;
+        font-weight: 500;
+        cursor: pointer;
+        transition: all 0.2s;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        order: 2;
+      }
+
+      .click-button:hover:not(:disabled) {
+        background: var(--primary-color);
+        color: white;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+      }
+
+      .click-button:active:not(:disabled) {
+        transform: translateY(0);
+      }
+
+      .click-button.active {
+        background: var(--primary-color);
+        color: white;
+        box-shadow: 0 0 0 3px rgba(var(--primary-color-rgb, 0, 123, 255), 0.3);
+        border-color: var(--primary-color);
+      }
+
+      .click-button:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .click-button-icon {
+        font-size: 24px;
+        opacity: 0.8;
+      }
+      
+      .click-button.active .click-button-icon {
+        opacity: 1;
       }
 
       .action-button {
@@ -671,6 +811,84 @@ class OpenctrolCard extends LitElement {
         font-size: 14px;
         font-weight: 500;
       }
+
+      .fullscreen-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: #000;
+        z-index: 10000;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .fullscreen-video {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        position: absolute;
+        top: 0;
+        left: 0;
+      }
+
+      .fullscreen-controls {
+        position: absolute;
+        top: 16px;
+        right: 16px;
+        display: flex;
+        gap: 8px;
+        z-index: 10001;
+      }
+
+      .fullscreen-touchpad-overlay {
+        position: absolute;
+        bottom: 80px;
+        left: 50%;
+        transform: translateX(-50%);
+        width: 400px;
+        height: 300px;
+        background: rgba(245, 245, 245, 0.9);
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        touch-action: none;
+        user-select: none;
+        z-index: 10001;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #666;
+        font-size: 14px;
+      }
+
+      .fullscreen-bottom-controls {
+        position: absolute;
+        bottom: 16px;
+        left: 50%;
+        transform: translateX(-50%);
+        display: flex;
+        gap: 12px;
+        z-index: 10001;
+      }
+
+      .fullscreen-button {
+        padding: 12px 24px;
+        border-radius: 8px;
+        border: 2px solid rgba(255, 255, 255, 0.3);
+        background: rgba(0, 0, 0, 0.7);
+        color: white;
+        font-size: 14px;
+        cursor: pointer;
+        transition: all 0.2s;
+      }
+
+      .fullscreen-button:hover {
+        background: rgba(0, 0, 0, 0.9);
+        border-color: rgba(255, 255, 255, 0.5);
+      }
     `;
   }
 
@@ -687,6 +905,131 @@ class OpenctrolCard extends LitElement {
     this._powerConfirm = null;
     this._moveThrottle = null;
     this._keyHoldTimeouts = new Map(); // Track hold timeouts per key
+    this._fullscreenOpen = false;
+    this._fullscreenCanvas = null;
+    this._fullscreenContext = null;
+    this._fullscreenWebSocket = null;
+    this._fullscreenSessionId = null;
+    this._leftClickHeld = false; // Track left click toggle state
+    this._rightClickHeld = false; // Track right click toggle state
+    this._leftClickTimeouts = new Map(); // Track left click timeouts for long press
+    this._rightClickTimeouts = new Map(); // Track right click timeouts for long press
+    
+    // Detect mobile device
+    this._isMobile = this._detectMobile();
+    this._mobileKeyboardVisible = false;
+    this._mobileKeyboardInput = null;
+  }
+  
+  _detectMobile() {
+    // Check for touch support, screen size, and user agent
+    const hasTouch = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+    const isSmallScreen = window.innerWidth < 768;
+    const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+    const isMobileUA = /android|webos|iphone|ipad|ipod|blackberry|iemobile|opera mini/i.test(userAgent.toLowerCase());
+    
+    return hasTouch && (isSmallScreen || isMobileUA);
+  }
+  
+  firstUpdated() {
+    // Setup mobile keyboard input element
+    if (this._isMobile) {
+      this._setupMobileKeyboard();
+    }
+  }
+  
+  _setupMobileKeyboard() {
+    // Create hidden input for mobile keyboard
+    const input = document.createElement("input");
+    input.type = "text";
+    input.style.position = "fixed";
+    input.style.top = "-1000px";
+    input.style.left = "-1000px";
+    input.style.opacity = "0";
+    input.style.pointerEvents = "none";
+    input.autocomplete = "off";
+    input.autocorrect = "off";
+    input.autocapitalize = "off";
+    input.spellcheck = false;
+    
+    input.addEventListener("keydown", (e) => {
+      e.preventDefault();
+      this._handleMobileKeyboardInput(e);
+    });
+    
+    input.addEventListener("keyup", (e) => {
+      e.preventDefault();
+    });
+    
+    input.addEventListener("blur", () => {
+      this._mobileKeyboardVisible = false;
+      this.requestUpdate();
+    });
+    
+    document.body.appendChild(input);
+    this._mobileKeyboardInput = input;
+  }
+  
+  _handleMobileKeyboardInput(e) {
+    if (!this._isOnline) return;
+    
+    let keyName = null;
+    
+    // Map key codes to key names
+    switch (e.key) {
+      case " ":
+        keyName = "SPACE";
+        break;
+      case "Backspace":
+        keyName = "BACKSPACE";
+        break;
+      case "Enter":
+        keyName = "ENTER";
+        break;
+      case "Escape":
+      case "Esc":
+        keyName = "ESC";
+        break;
+      case "Tab":
+        keyName = "TAB";
+        break;
+      case "Delete":
+        keyName = "DEL";
+        break;
+      default:
+        // Handle letter and number keys
+        if (e.key.length === 1) {
+          const upperKey = e.key.toUpperCase();
+          if ((upperKey >= "A" && upperKey <= "Z") || (upperKey >= "0" && upperKey <= "9")) {
+            keyName = upperKey;
+          }
+        }
+        break;
+    }
+    
+    if (keyName) {
+      // Combine with latched modifiers
+      const combo = [...new Set([...this._latchedModifiers, keyName])];
+      this._sendKeyCombo(combo);
+    }
+    
+    // Clear input to prevent text from appearing
+    if (this._mobileKeyboardInput) {
+      this._mobileKeyboardInput.value = "";
+    }
+  }
+  
+  _toggleMobileKeyboard() {
+    if (!this._mobileKeyboardInput) return;
+    
+    if (this._mobileKeyboardVisible) {
+      this._mobileKeyboardInput.blur();
+      this._mobileKeyboardVisible = false;
+    } else {
+      this._mobileKeyboardInput.focus();
+      this._mobileKeyboardVisible = true;
+    }
+    this.requestUpdate();
   }
 
   setConfig(config) {
@@ -738,10 +1081,11 @@ class OpenctrolCard extends LitElement {
   }
 
   get _entityTitle() {
-    if (this.config.title) {
-      return this.config.title;
-    }
-    return this._entity?.attributes?.friendly_name || this.config.entity;
+    return "openctrol";
+  }
+  
+  get _statusColor() {
+    return this._isOnline ? "#4caf50" : "#f44336"; // Green for online, red for offline
   }
 
   _handleTouchStart(e) {
@@ -817,8 +1161,11 @@ class OpenctrolCard extends LitElement {
     }
   }
 
-  _sendPointerEvent(type, dx, dy, button) {
-    if (!this._entity || !this._isOnline) return;
+  async _sendPointerEvent(type, dx, dy, button) {
+    if (!this._entity || !this._isOnline) {
+      console.warn("Cannot send pointer event: entity not available or offline");
+      return;
+    }
     
     const data = {
       entity_id: this.config.entity,
@@ -826,21 +1173,78 @@ class OpenctrolCard extends LitElement {
     };
     
     if (dx !== null && dy !== null) {
-      data.dx = dx;
-      data.dy = dy;
+      // Ensure dx and dy are numbers (not strings) and round to integers
+      data.dx = Math.round(typeof dx === 'number' ? dx : parseFloat(dx) || 0);
+      data.dy = Math.round(typeof dy === 'number' ? dy : parseFloat(dy) || 0);
     }
     
     if (button) {
       data.button = button;
     }
     
-    this.hass.callService("openctrol", "send_pointer_event", data).catch((err) => {
-      console.error("Failed to send pointer event:", err);
-    });
+    // Retry logic for failed events
+    const maxRetries = 3;
+    let lastError = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await this.hass.callService("openctrol", "send_pointer_event", data);
+        return; // Success, exit retry loop
+      } catch (err) {
+        lastError = err;
+        const errorMsg = err.message || err.toString() || "Unknown error";
+        if (attempt < maxRetries - 1) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        } else {
+          // Log error on final failure
+          console.error(`Failed to send pointer event (${type}) after ${maxRetries} attempts:`, errorMsg);
+          // Only show alert for critical errors, not for every move event
+          if (type === "click" || type === "button") {
+            console.warn("Click/button event failed - this may indicate a connection issue");
+          }
+        }
+      }
+    }
   }
 
-  _sendKeyCombo(keys) {
-    if (!this._entity || !this._isOnline) return;
+  async _sendPointerButton(button, action) {
+    // Send pointer button down/up for toggle functionality
+    if (!this._entity || !this._isOnline) {
+      console.warn("Cannot send pointer button: entity not available or offline");
+      return;
+    }
+    
+    const data = {
+      entity_id: this.config.entity,
+      type: "button",
+      button: button,
+      dx: action, // Pass action as dx parameter (hack for service call)
+    };
+    
+    try {
+      await this.hass.callService("openctrol", "send_pointer_event", data);
+    } catch (err) {
+      console.error(`Failed to send pointer button ${action}:`, err);
+      // Don't alert for every button event - just log
+    }
+  }
+
+  async _sendClickAction(button) {
+    // Send a complete click action (down + up) for normal button press
+    if (!this._entity || !this._isOnline) {
+      return;
+    }
+    
+    // Send click event (which sends both down and up)
+    await this._sendPointerEvent("click", null, null, button);
+  }
+
+  async _sendKeyCombo(keys) {
+    if (!this._entity || !this._isOnline) {
+      console.warn("Cannot send key combo: entity not available or offline");
+      return; // Don't alert, just return silently
+    }
     
     // If keys is already an array (from shortcut), use it directly (ignore latched modifiers)
     // Otherwise combine with latched modifiers (set union to avoid duplicates)
@@ -854,12 +1258,31 @@ class OpenctrolCard extends LitElement {
       combo = [...new Set([...this._latchedModifiers, ...keyArray])];
     }
     
-    this.hass.callService("openctrol", "send_key_combo", {
-      entity_id: this.config.entity,
-      keys: combo,
-    }).catch((err) => {
-      console.error("Failed to send key combo:", err);
-    });
+    // Retry logic for failed key events
+    const maxRetries = 3;
+    let lastError = null;
+    
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        await this.hass.callService("openctrol", "send_key_combo", {
+          entity_id: this.config.entity,
+          keys: combo,
+        });
+        return; // Success, exit retry loop
+      } catch (err) {
+        lastError = err;
+        const errorMsg = err.message || err.toString() || "Unknown error";
+        if (attempt < maxRetries - 1) {
+          // Wait before retry (exponential backoff)
+          await new Promise(resolve => setTimeout(resolve, 100 * (attempt + 1)));
+        } else {
+          // Log error on final failure
+          console.error(`Failed to send key combo (${combo.join('+')}) after ${maxRetries} attempts:`, errorMsg);
+          // Show warning for keyboard events as they're user-initiated
+          console.warn("Keyboard input failed - this may indicate a WebSocket connection issue");
+        }
+      }
+    }
   }
 
   _handleKeyButton(key, isShortcut = false) {
@@ -870,14 +1293,21 @@ class OpenctrolCard extends LitElement {
     }
     
     // Regular key - send with latched modifiers
-    this._sendKeyCombo([key]);
+    const combo = [...new Set([...this._latchedModifiers, key])];
+    this._sendKeyCombo(combo);
   }
 
   _handleKeyHold(key) {
-    // Long press on modifier key toggles latch
+    // Long press on modifier key toggles latch (without sending the key)
     const isModifier = ["CTRL", "ALT", "SHIFT", "WIN"].includes(key);
     if (isModifier) {
+      // Toggle latch state for modifier keys
       this._toggleModifierLatch(key);
+      console.log(`Modifier ${key} latch toggled. Latched modifiers:`, Array.from(this._latchedModifiers));
+    } else {
+      // For non-modifier keys, long press sends the key repeatedly
+      // But we don't want to spam, so just send once
+      this._sendKeyCombo([key]);
     }
   }
 
@@ -918,15 +1348,56 @@ class OpenctrolCard extends LitElement {
     this.requestUpdate();
   }
 
-  _handleSelectMonitor(monitorId) {
-    if (!this._entity || !this._isOnline) return;
+  async _handleSelectMonitor(monitorId) {
+    console.log("_handleSelectMonitor called with:", monitorId);
+    if (!this._entity || !this._isOnline) {
+      console.warn("Cannot select monitor: entity=", this._entity, "online=", this._isOnline);
+      alert("Cannot select monitor: Agent is offline");
+      return;
+    }
     
-    this.hass.callService("openctrol", "select_monitor", {
-      entity_id: this.config.entity,
-      monitor_id: monitorId,
-    }).catch((err) => {
+    if (!monitorId) {
+      console.error("Monitor ID is required");
+      alert("Monitor ID is required");
+      return;
+    }
+    
+    console.log("Selecting monitor:", monitorId, "entity:", this.config.entity);
+    try {
+      await this.hass.callService("openctrol", "select_monitor", {
+        entity_id: this.config.entity,
+        monitor_id: monitorId,
+      });
+      console.log("Monitor selection service call succeeded");
+      
+      // Wait a moment for the service to process and entity to update
+      await new Promise(resolve => setTimeout(resolve, 300));
+      
+      // Refresh entity to update monitor selection (multiple attempts for reliability)
+      for (let i = 0; i < 3; i++) {
+        try {
+          await this.hass.callService("homeassistant", "update_entity", {
+            entity_id: this.config.entity,
+          });
+          // Small delay between refresh attempts
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (refreshErr) {
+          console.warn("Entity refresh attempt", i + 1, "failed:", refreshErr);
+        }
+      }
+      
+      // Update local state to reflect changes immediately
+      this.requestUpdate();
+      
+      // Force another update after a short delay to ensure UI reflects the change
+      setTimeout(() => {
+        this.requestUpdate();
+      }, 500);
+    } catch (err) {
       console.error("Failed to select monitor:", err);
-    });
+      const errorMsg = err.message || err.toString() || "Unknown error";
+      alert(`Failed to select monitor: ${errorMsg}`);
+    }
   }
 
   _handleMasterVolumeChange(e) {
@@ -965,26 +1436,74 @@ class OpenctrolCard extends LitElement {
     });
   }
 
-  _handleSetDefaultDevice(deviceId) {
-    if (!this._entity || !this._isOnline) return;
+  async _handleSetDefaultDevice(deviceId) {
+    if (!this._entity || !this._isOnline) {
+      alert("Cannot set default device: Agent is offline");
+      return;
+    }
     
-    this.hass.callService("openctrol", "set_default_output_device", {
-      entity_id: this.config.entity,
-      device_id: deviceId,
-    }).catch((err) => {
+    if (!deviceId) {
+      alert("Device ID is required");
+      return;
+    }
+    
+    // Validate entity_id is in correct format (should be like "sensor.openctrol_...")
+    const entityId = this.config?.entity;
+    if (!entityId || !entityId.includes('.')) {
+      console.error("Invalid entity ID format:", entityId);
+      alert("Configuration error: Invalid entity ID. Please reconfigure the card.");
+      return;
+    }
+    
+    try {
+      await this.hass.callService("openctrol", "set_default_output_device", {
+        entity_id: entityId,
+        device_id: deviceId,
+      });
+      // Refresh entity to update default device status
+      await this.hass.callService("homeassistant", "update_entity", {
+        entity_id: this.config.entity,
+      });
+      // Note: Service may not raise error even if device change fails (some systems don't support it)
+      // The entity refresh will show the current default device status
+    } catch (err) {
       console.error("Failed to set default device:", err);
-    });
+      let errorMsg = "";
+      if (err && typeof err === 'object') {
+        errorMsg = err.message || err.detail || JSON.stringify(err);
+      } else {
+        errorMsg = String(err || "Unknown error");
+      }
+      
+      // Provide user-friendly error message
+      if (errorMsg.includes("invalid entity ID") || errorMsg.includes("Entity ID")) {
+        alert(`Configuration error: Please ensure the card is configured with a valid entity ID (e.g., sensor.openctrol_agent_status). Error: ${errorMsg}`);
+      } else if (errorMsg.includes("admin") || errorMsg.includes("privilege") || errorMsg.includes("COM")) {
+        alert(`Failed to set default device: Some systems don't support programmatic device changes. You may need to change the default device in Windows Sound Settings. Error: ${errorMsg}`);
+      } else {
+        alert(`Failed to set default device: ${errorMsg}`);
+      }
+    }
   }
 
   _renderTopBar() {
     return html`
       <div class="top-bar">
         <div class="top-bar-left">
-          <h2 class="title">${this._entityTitle}</h2>
-          <span class="status-pill ${this._isOnline ? "status-online" : "status-offline"}">
-            ${this._isOnline ? "ONLINE" : "OFFLINE"}
-          </span>
-          ${this._isDegraded ? html`<span class="status-pill status-degraded">DEGRADED</span>` : ""}
+          ${this._isMobile ? html`
+            <button
+              class="icon-button"
+              @click=${() => this._toggleMobileKeyboard()}
+              title=${this._mobileKeyboardVisible ? "Hide Keyboard" : "Show Keyboard"}
+            >
+              ⌨
+            </button>
+          ` : ""}
+          <h2 class="title" style="display: flex; align-items: center; gap: 8px;">
+            ${this._entityTitle}
+            <div class="status-indicator" style="width: 18px; height: 18px; border-radius: 50%; background: ${this._statusColor}; box-shadow: 0 0 6px ${this._statusColor}; flex-shrink: 0;"></div>
+            ${this._isDegraded ? html`<span class="status-pill status-degraded" style="font-size: 10px; padding: 2px 6px;">DEGRADED</span>` : ""}
+          </h2>
         </div>
         <div class="top-bar-right">
           ${this.config.show_power ? html`
@@ -1029,20 +1548,78 @@ class OpenctrolCard extends LitElement {
   }
 
   _renderTouchpad() {
+    // Always render touchpad - it's a core feature
     return html`
-      <div class="touchpad-container ${!this._isOnline ? "offline" : ""}">
+      <div 
+        class="touchpad-container ${!this._isOnline ? "offline" : ""}" 
+        style="display: block !important; visibility: visible !important; opacity: ${!this._isOnline ? '0.5' : '1'} !important; height: 400px !important; min-height: 400px !important; width: calc(100% - 32px) !important; margin: 16px !important; background: #f5f5f5 !important; border: 2px solid #e0e0e0 !important; border-radius: 8px !important; position: relative !important; box-sizing: border-box !important;"
+      >
         <div
           class="touchpad"
+          style="width: 100%; height: 100%; position: relative;"
           @touchstart=${this._handleTouchStart}
           @touchmove=${this._handleTouchMove}
           @touchend=${this._handleTouchEnd}
           @touchcancel=${this._handleTouchEnd}
+          @mousedown=${(e) => {
+            // Support mouse events for desktop
+            if (!this._isOnline) return;
+            this._touchStart = {
+              x: e.clientX,
+              y: e.clientY,
+              time: Date.now(),
+              moved: false,
+              touchCount: 1,
+            };
+            this._lastMove = { x: e.clientX, y: e.clientY };
+          }}
+          @mousemove=${(e) => {
+            if (!this._isOnline || !this._touchStart) return;
+            e.preventDefault();
+            e.stopPropagation();
+            const dx = e.clientX - this._lastMove.x;
+            const dy = e.clientY - this._lastMove.y;
+            if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+              this._touchStart.moved = true;
+              this._lastMove = { x: e.clientX, y: e.clientY };
+              if (this._moveThrottle) {
+                clearTimeout(this._moveThrottle);
+              }
+              this._moveThrottle = setTimeout(() => {
+                if (this._scrollMode) {
+                  this._sendPointerEvent("scroll", dx, dy);
+                } else {
+                  this._sendPointerEvent("move", dx, dy);
+                }
+                this._moveThrottle = null;
+              }, 16);
+            }
+          }}
+          @mouseup=${(e) => {
+            if (!this._isOnline || !this._touchStart) return;
+            const duration = Date.now() - this._touchStart.time;
+            const moved = this._touchStart.moved;
+            if (!moved && duration < 300) {
+              this._sendPointerEvent("click", null, null, e.button === 2 ? "right" : e.button === 1 ? "middle" : "left");
+            }
+            this._touchStart = null;
+            this._lastMove = null;
+            if (this._moveThrottle) {
+              clearTimeout(this._moveThrottle);
+              this._moveThrottle = null;
+            }
+          }}
+          @contextmenu=${(e) => e.preventDefault()}
         >
           ${!this._isOnline ? html`
             <div class="touchpad-overlay">
               Offline - Touchpad disabled
             </div>
-          ` : ""}
+          ` : html`
+            <div class="touchpad-overlay" style="opacity: 0.3; pointer-events: none;">
+              Touchpad Area - Drag to move, tap to click
+            </div>
+          `}
         </div>
       </div>
     `;
@@ -1271,35 +1848,628 @@ class OpenctrolCard extends LitElement {
     return html`
       <div class="button-row">
         <button
-          class="action-button"
-          @click=${() => this._sendPointerEvent("click", null, null, "left")}
+          class="click-button ${this._leftClickHeld ? "active" : ""}"
+          @mousedown=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!this._isOnline) return;
+            
+            // Cancel any existing timeout to prevent race conditions
+            const existingTimeout = this._leftClickTimeouts?.get("left");
+            if (existingTimeout) {
+              clearTimeout(existingTimeout);
+            }
+            
+            if (!this._leftClickTimeouts) {
+              this._leftClickTimeouts = new Map();
+            }
+            
+            // Start long press timer - reduced to 300ms for better responsiveness
+            const timeout = setTimeout(() => {
+              // Long press - latch the button
+              if (!this._leftClickHeld && this._isOnline) {
+                this._leftClickHeld = true;
+                this._sendPointerButton("left", "down").catch(err => {
+                  console.error("Failed to send pointer button down:", err);
+                });
+                this.requestUpdate();
+              }
+              if (this._leftClickTimeouts) {
+                this._leftClickTimeouts.delete("left");
+              }
+            }, 300); // 300ms for long press (reduced from 500ms)
+            
+            this._leftClickTimeouts.set("left", timeout);
+          }}
+          @mouseup=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const timeout = this._leftClickTimeouts?.get("left");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._leftClickTimeouts.delete("left");
+              
+              // Short press - send normal click action (unless already latched)
+              if (!this._leftClickHeld) {
+                // Send complete click action
+                this._sendClickAction("left");
+              }
+            } else if (this._leftClickHeld) {
+              // Button is latched - unlatch on click
+              this._leftClickHeld = false;
+              this._sendPointerButton("left", "up");
+              this.requestUpdate();
+            }
+          }}
+          @mouseleave=${() => {
+            // Cancel long press if mouse leaves
+            const timeout = this._leftClickTimeouts?.get("left");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._leftClickTimeouts.delete("left");
+              
+              // If not latched, send click on leave (user pressed and released quickly)
+              if (!this._leftClickHeld) {
+                this._sendClickAction("left");
+              }
+            }
+          }}
+          @touchstart=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!this._isOnline) return;
+            
+            // Cancel any existing timeout to prevent race conditions
+            const existingTimeout = this._leftClickTimeouts?.get("left");
+            if (existingTimeout) {
+              clearTimeout(existingTimeout);
+            }
+            
+            if (!this._leftClickTimeouts) {
+              this._leftClickTimeouts = new Map();
+            }
+            
+            const timeout = setTimeout(() => {
+              // Long press - latch
+              if (!this._leftClickHeld && this._isOnline) {
+                this._leftClickHeld = true;
+                this._sendPointerButton("left", "down").catch(err => {
+                  console.error("Failed to send pointer button down:", err);
+                });
+                this.requestUpdate();
+              }
+              if (this._leftClickTimeouts) {
+                this._leftClickTimeouts.delete("left");
+              }
+            }, 300); // 300ms for long press
+            
+            this._leftClickTimeouts.set("left", timeout);
+          }}
+          @touchend=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const timeout = this._leftClickTimeouts?.get("left");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._leftClickTimeouts.delete("left");
+              
+              if (!this._leftClickHeld) {
+                // Short tap - send click
+                this._sendClickAction("left");
+              }
+            } else if (this._leftClickHeld) {
+              // Latched - unlatch on second tap
+              this._leftClickHeld = false;
+              this._sendPointerButton("left", "up");
+              this.requestUpdate();
+            }
+          }}
           ?disabled=${!this._isOnline}
         >
-          Left Click
+          <span class="click-button-icon">🖱</span>
+          ${this._leftClickHeld ? "Release" : "Left Click"}
         </button>
         <button
-          class="action-button"
-          @click=${() => this._sendPointerEvent("click", null, null, "right")}
-          ?disabled=${!this._isOnline}
-        >
-          Right Click
-        </button>
-        <button
-          class="action-button"
-          @click=${() => this._sendPointerEvent("click", null, null, "middle")}
-          ?disabled=${!this._isOnline}
-        >
-          Middle Click
-        </button>
-        <button
-          class="action-button ${this._scrollMode ? "active" : ""}"
+          class="scroll-move-button ${this._scrollMode ? "active" : ""}"
           @click=${() => { this._scrollMode = !this._scrollMode; this.requestUpdate(); }}
           ?disabled=${!this._isOnline}
         >
-          ${this._scrollMode ? "Scroll Mode" : "Move Mode"}
+          ${this._scrollMode ? "Scroll" : "Move"}
+        </button>
+        <button
+          class="click-button ${this._rightClickHeld ? "active" : ""}"
+          @mousedown=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!this._isOnline) return;
+            
+            // Cancel any existing timeout to prevent race conditions
+            const existingTimeout = this._rightClickTimeouts?.get("right");
+            if (existingTimeout) {
+              clearTimeout(existingTimeout);
+            }
+            
+            if (!this._rightClickTimeouts) {
+              this._rightClickTimeouts = new Map();
+            }
+            
+            const timeout = setTimeout(() => {
+              if (!this._rightClickHeld && this._isOnline) {
+                this._rightClickHeld = true;
+                this._sendPointerButton("right", "down").catch(err => {
+                  console.error("Failed to send pointer button down:", err);
+                });
+                this.requestUpdate();
+              }
+              if (this._rightClickTimeouts) {
+                this._rightClickTimeouts.delete("right");
+              }
+            }, 300); // 300ms for long press (reduced from 500ms)
+            
+            this._rightClickTimeouts.set("right", timeout);
+          }}
+          @mouseup=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const timeout = this._rightClickTimeouts?.get("right");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._rightClickTimeouts.delete("right");
+              
+              if (!this._rightClickHeld) {
+                this._sendClickAction("right");
+              }
+            } else if (this._rightClickHeld) {
+              this._rightClickHeld = false;
+              this._sendPointerButton("right", "up");
+              this.requestUpdate();
+            }
+          }}
+          @mouseleave=${() => {
+            const timeout = this._rightClickTimeouts?.get("right");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._rightClickTimeouts.delete("right");
+              
+              if (!this._rightClickHeld) {
+                this._sendClickAction("right");
+              }
+            }
+          }}
+          @touchstart=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            if (!this._isOnline) return;
+            
+            // Cancel any existing timeout to prevent race conditions
+            const existingTimeout = this._rightClickTimeouts?.get("right");
+            if (existingTimeout) {
+              clearTimeout(existingTimeout);
+            }
+            
+            if (!this._rightClickTimeouts) {
+              this._rightClickTimeouts = new Map();
+            }
+            
+            const timeout = setTimeout(() => {
+              if (!this._rightClickHeld && this._isOnline) {
+                this._rightClickHeld = true;
+                this._sendPointerButton("right", "down").catch(err => {
+                  console.error("Failed to send pointer button down:", err);
+                });
+                this.requestUpdate();
+              }
+              if (this._rightClickTimeouts) {
+                this._rightClickTimeouts.delete("right");
+              }
+            }, 300); // 300ms for long press (reduced from 500ms)
+            
+            this._rightClickTimeouts.set("right", timeout);
+          }}
+          @touchend=${(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            
+            const timeout = this._rightClickTimeouts?.get("right");
+            if (timeout) {
+              clearTimeout(timeout);
+              this._rightClickTimeouts.delete("right");
+              
+              if (!this._rightClickHeld) {
+                this._sendClickAction("right");
+              }
+            } else if (this._rightClickHeld) {
+              this._rightClickHeld = false;
+              this._sendPointerButton("right", "up");
+              this.requestUpdate();
+            }
+          }}
+          ?disabled=${!this._isOnline}
+        >
+          <span class="click-button-icon">🖱</span>
+          ${this._rightClickHeld ? "Release" : "Right Click"}
         </button>
       </div>
     `;
+  }
+
+  async _openFullscreenMonitor(monitorId) {
+    if (!this._isOnline) {
+      alert("Agent is offline. Cannot open monitor view.");
+      return;
+    }
+
+    // Ensure monitor is selected before opening fullscreen
+    if (monitorId) {
+      try {
+        await this._handleSelectMonitor(monitorId);
+        // Wait a bit longer for monitor selection to propagate
+        await new Promise(resolve => setTimeout(resolve, 800));
+      } catch (err) {
+        console.error("Failed to select monitor:", err);
+        // Continue anyway - user may have already selected it
+      }
+    }
+
+    this._fullscreenOpen = true;
+    this.requestUpdate();
+
+    // Create fullscreen overlay
+    const overlay = document.createElement("div");
+    overlay.className = "fullscreen-overlay";
+    overlay.id = "openctrol-fullscreen-overlay";
+
+    // Create video canvas
+    const canvas = document.createElement("canvas");
+    canvas.className = "fullscreen-video";
+    canvas.id = "openctrol-fullscreen-canvas";
+    this._fullscreenCanvas = canvas;
+    this._fullscreenContext = canvas.getContext("2d");
+    overlay.appendChild(canvas);
+
+    // Create touchpad overlay
+    const touchpadOverlay = document.createElement("div");
+    touchpadOverlay.className = "fullscreen-touchpad-overlay";
+    touchpadOverlay.innerHTML = "Touchpad Area - Drag to move, tap to click";
+    this._setupFullscreenTouchpad(touchpadOverlay);
+    overlay.appendChild(touchpadOverlay);
+
+    // Create controls
+    const controls = document.createElement("div");
+    controls.className = "fullscreen-controls";
+    controls.innerHTML = `
+      <button class="fullscreen-button" id="openctrol-fullscreen-keyboard">⌨ Keyboard</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-close">✕ Close</button>
+    `;
+    overlay.appendChild(controls);
+
+    // Create bottom controls
+    const bottomControls = document.createElement("div");
+    bottomControls.className = "fullscreen-bottom-controls";
+    bottomControls.innerHTML = `
+      <button class="fullscreen-button" id="openctrol-fullscreen-left">Left Click</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-right">Right Click</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-middle">Middle Click</button>
+    `;
+    overlay.appendChild(bottomControls);
+
+    document.body.appendChild(overlay);
+
+    // Setup event handlers
+    document.getElementById("openctrol-fullscreen-close").addEventListener("click", () => {
+      this._closeFullscreenMonitor();
+    });
+    document.getElementById("openctrol-fullscreen-keyboard").addEventListener("click", () => {
+      this._activePanel = "keyboard";
+      this.requestUpdate();
+    });
+    document.getElementById("openctrol-fullscreen-left").addEventListener("click", () => {
+      this._sendPointerEvent("click", null, null, "left");
+    });
+    document.getElementById("openctrol-fullscreen-right").addEventListener("click", () => {
+      this._sendPointerEvent("click", null, null, "right");
+    });
+    document.getElementById("openctrol-fullscreen-middle").addEventListener("click", () => {
+      this._sendPointerEvent("click", null, null, "middle");
+    });
+
+    // Connect video stream
+    await this._connectFullscreenVideo();
+
+    // Resize canvas to fit screen
+    this._resizeFullscreenCanvas();
+    window.addEventListener("resize", () => this._resizeFullscreenCanvas());
+  }
+
+  _setupFullscreenTouchpad(element) {
+    let touchStart = null;
+    let lastMove = null;
+    let moveThrottle = null;
+
+    const handleStart = (e) => {
+      const point = e.touches ? e.touches[0] : e;
+      touchStart = {
+        x: point.clientX,
+        y: point.clientY,
+        time: Date.now(),
+        moved: false,
+      };
+      lastMove = { x: point.clientX, y: point.clientY };
+    };
+
+    const handleMove = (e) => {
+      if (!touchStart) return;
+      e.preventDefault();
+      const point = e.touches ? e.touches[0] : e;
+      const dx = point.clientX - lastMove.x;
+      const dy = point.clientY - lastMove.y;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+        touchStart.moved = true;
+        lastMove = { x: point.clientX, y: point.clientY };
+        if (moveThrottle) clearTimeout(moveThrottle);
+        moveThrottle = setTimeout(() => {
+          this._sendPointerEvent("move", dx, dy);
+          moveThrottle = null;
+        }, 16);
+      }
+    };
+
+    const handleEnd = (e) => {
+      if (!touchStart) return;
+      const point = e.changedTouches ? e.changedTouches[0] : e;
+      const duration = Date.now() - touchStart.time;
+      const moved = touchStart.moved;
+      if (!moved && duration < 300) {
+        const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
+        this._sendPointerEvent("click", null, null, button);
+      }
+      touchStart = null;
+      lastMove = null;
+      if (moveThrottle) {
+        clearTimeout(moveThrottle);
+        moveThrottle = null;
+      }
+    };
+
+    element.addEventListener("touchstart", handleStart);
+    element.addEventListener("touchmove", handleMove);
+    element.addEventListener("touchend", handleEnd);
+    element.addEventListener("mousedown", handleStart);
+    element.addEventListener("mousemove", handleMove);
+    element.addEventListener("mouseup", handleEnd);
+    element.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  _resizeFullscreenCanvas() {
+    if (!this._fullscreenCanvas) return;
+    this._fullscreenCanvas.width = window.innerWidth;
+    this._fullscreenCanvas.height = window.innerHeight;
+  }
+
+  async _connectFullscreenVideo() {
+    try {
+      const haId = this.hass.config?.location_name || this.config.entity || "home-assistant";
+      
+      // Create desktop session for video
+      console.log("Creating desktop session for fullscreen video...");
+      await this.hass.callService("openctrol", "create_desktop_session", {
+        entity_id: this.config.entity,
+        ha_id: haId,
+        ttl_seconds: 3600,
+      });
+
+      // Wait for entity to update and refresh multiple times to ensure we get session info
+      for (let i = 0; i < 3; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          await this.hass.callService("homeassistant", "update_entity", {
+            entity_id: this.config.entity,
+          });
+        } catch (refreshErr) {
+          console.warn("Entity refresh attempt", i + 1, "failed:", refreshErr);
+        }
+      }
+
+      // Get WebSocket URL from entity attributes
+      const entity = this.hass.states[this.config.entity];
+      console.log("Entity state:", entity);
+      console.log("Entity attributes:", entity?.attributes);
+      
+      const websocketUrl = entity?.attributes?.latest_websocket_url;
+      const sessionId = entity?.attributes?.latest_session_id;
+
+      console.log("WebSocket URL:", websocketUrl);
+      console.log("Session ID:", sessionId);
+
+      if (!websocketUrl) {
+        // Try one more refresh before giving up
+        await this.hass.callService("homeassistant", "update_entity", {
+          entity_id: this.config.entity,
+        });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const retryEntity = this.hass.states[this.config.entity];
+        const retryUrl = retryEntity?.attributes?.latest_websocket_url;
+        if (retryUrl) {
+          this._fullscreenSessionId = retryEntity?.attributes?.latest_session_id;
+          await this._connectFullscreenWebSocket(retryUrl);
+          return;
+        }
+        throw new Error("WebSocket URL not available. Please ensure a monitor is selected and try again.");
+      }
+
+      this._fullscreenSessionId = sessionId;
+      
+      // Connect to WebSocket
+      await this._connectFullscreenWebSocket(websocketUrl);
+    } catch (err) {
+      console.error("Failed to connect fullscreen video:", err);
+      alert(`Failed to connect video stream: ${err.message || err}`);
+      if (this._fullscreenCanvas) {
+        const ctx = this._fullscreenContext;
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, this._fullscreenCanvas.width, this._fullscreenCanvas.height);
+        ctx.fillStyle = "#f44336";
+        ctx.font = "20px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText(`Error: ${err.message || err}`, this._fullscreenCanvas.width / 2, this._fullscreenCanvas.height / 2);
+      }
+    }
+  }
+
+  async _connectFullscreenWebSocket(websocketUrl) {
+    try {
+      const ws = new WebSocket(websocketUrl);
+      
+      ws.onopen = () => {
+        console.log("Fullscreen video WebSocket connected");
+        if (this._fullscreenCanvas) {
+          const ctx = this._fullscreenContext;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, this._fullscreenCanvas.width, this._fullscreenCanvas.height);
+          ctx.fillStyle = "#4caf50";
+          ctx.font = "20px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText("Connected - Waiting for video stream...", this._fullscreenCanvas.width / 2, this._fullscreenCanvas.height / 2);
+        }
+      };
+      
+      ws.onmessage = (event) => {
+        const handleData = (data) => {
+          if (data instanceof ArrayBuffer) {
+            this._handleFullscreenVideoFrame(new Uint8Array(data));
+          } else if (data instanceof Blob) {
+            data.arrayBuffer().then(buffer => {
+              this._handleFullscreenVideoFrame(new Uint8Array(buffer));
+            }).catch(err => {
+              console.error("Error reading blob:", err);
+            });
+          }
+        };
+        handleData(event.data);
+      };
+      
+      ws.onerror = () => {
+        console.error("Fullscreen video WebSocket error");
+        if (this._fullscreenCanvas) {
+          const ctx = this._fullscreenContext;
+          ctx.fillStyle = "#000";
+          ctx.fillRect(0, 0, this._fullscreenCanvas.width, this._fullscreenCanvas.height);
+          ctx.fillStyle = "#f44336";
+          ctx.font = "20px Arial";
+          ctx.textAlign = "center";
+          ctx.fillText("WebSocket connection error", this._fullscreenCanvas.width / 2, this._fullscreenCanvas.height / 2);
+        }
+      };
+      
+      ws.onclose = () => {
+        console.log("Fullscreen video WebSocket closed");
+      };
+      
+      this._fullscreenWebSocket = ws;
+    } catch (err) {
+      console.error("Failed to create fullscreen WebSocket:", err);
+      throw err;
+    }
+  }
+
+  _handleFullscreenVideoFrame(data) {
+    if (!data || data.length < 16) return;
+    
+    try {
+      // Parse OFRA header
+      const header = data.slice(0, 16);
+      const magic = String.fromCharCode(...header.slice(0, 4));
+      
+      if (magic !== "OFRA") return;
+      
+      const view = new DataView(header.buffer, header.byteOffset, header.byteLength);
+      const width = view.getUint32(4, true);
+      const height = view.getUint32(8, true);
+      const jpegData = data.slice(16);
+      
+      if (jpegData.length > 0 && this._fullscreenCanvas && this._fullscreenContext) {
+        this._renderFullscreenFrame(jpegData, width, height);
+      }
+    } catch (err) {
+      console.error("Error handling fullscreen video frame:", err);
+    }
+  }
+
+  _renderFullscreenFrame(jpegData, width, height) {
+    if (!this._fullscreenCanvas || !this._fullscreenContext || !jpegData || jpegData.length === 0) {
+      return;
+    }
+
+    try {
+      const base64 = btoa(String.fromCharCode(...jpegData));
+      const img = new Image();
+      
+      img.onload = () => {
+        if (!this._fullscreenCanvas || !this._fullscreenContext) return;
+        
+        const canvas = this._fullscreenCanvas;
+        const ctx = this._fullscreenContext;
+        
+        // Calculate aspect ratio and draw
+        const imgAspect = width / height;
+        const canvasAspect = canvas.width / canvas.height;
+        
+        let drawWidth = canvas.width;
+        let drawHeight = canvas.height;
+        let offsetX = 0;
+        let offsetY = 0;
+        
+        if (imgAspect > canvasAspect) {
+          drawHeight = canvas.width / imgAspect;
+          offsetY = (canvas.height - drawHeight) / 2;
+        } else {
+          drawWidth = canvas.height * imgAspect;
+          offsetX = (canvas.width - drawWidth) / 2;
+        }
+        
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.drawImage(img, offsetX, offsetY, drawWidth, drawHeight);
+      };
+      
+      img.onerror = () => {
+        console.error("Error loading fullscreen video frame");
+      };
+      
+      img.src = `data:image/jpeg;base64,${base64}`;
+    } catch (err) {
+      console.error("Error rendering fullscreen frame:", err);
+    }
+  }
+
+  _closeFullscreenMonitor() {
+    this._fullscreenOpen = false;
+    const overlay = document.getElementById("openctrol-fullscreen-overlay");
+    if (overlay) {
+      overlay.remove();
+    }
+    window.removeEventListener("resize", this._resizeFullscreenCanvas);
+    
+    // Disconnect video
+    if (this._fullscreenWebSocket) {
+      this._fullscreenWebSocket.close();
+      this._fullscreenWebSocket = null;
+    }
+    
+    if (this._fullscreenSessionId) {
+      this.hass.callService("openctrol", "end_desktop_session", {
+        entity_id: this.config.entity,
+        session_id: this._fullscreenSessionId,
+      }).catch(() => {});
+      this._fullscreenSessionId = null;
+    }
+    
+    this._fullscreenCanvas = null;
+    this._fullscreenContext = null;
+    this.requestUpdate();
   }
 
   _renderPowerPanel() {
@@ -1324,9 +2494,12 @@ class OpenctrolCard extends LitElement {
           </button>
           <button
             class="power-button wol"
-            @click=${() => this._handlePowerAction("wol")}
+            @click=${() => {
+              alert("Wake-on-LAN is not yet supported by the Openctrol Agent backend. This feature will be available in a future update.");
+            }}
+            title="Wake-on-LAN is not yet supported"
           >
-            Wake on LAN
+            Wake on LAN (Not Available)
           </button>
         </div>
       </div>
@@ -1340,6 +2513,16 @@ class OpenctrolCard extends LitElement {
     const monitors = this._entity?.attributes?.available_monitors || [];
     const selectedMonitorId = this._entity?.attributes?.selected_monitor_id || "";
     
+    // Normalize monitor data to handle both PascalCase (from API) and snake_case formats
+    const normalizedMonitors = monitors.map(monitor => ({
+      id: monitor.id || monitor.Id || "",
+      name: monitor.name || monitor.Name || monitor.id || monitor.Id || "Unknown",
+      width: monitor.width || monitor.Width || 0,
+      height: monitor.height || monitor.Height || 0,
+      is_primary: monitor.is_primary || monitor.IsPrimary || false,
+      resolution: monitor.resolution || `${monitor.width || monitor.Width || 0}x${monitor.height || monitor.Height || 0}`
+    }));
+    
     return html`
       <div class="panel">
         <div class="panel-header">
@@ -1347,19 +2530,24 @@ class OpenctrolCard extends LitElement {
           <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }}>×</button>
         </div>
         <div class="panel-section">
-          <div class="section-title">Monitor Selection</div>
-          ${monitors.length > 0 ? html`
+          <div class="section-title">Monitor Selection (${normalizedMonitors.length} available)</div>
+          ${normalizedMonitors.length > 0 ? html`
             <div class="monitor-list">
-              ${monitors.map(monitor => html`
+              ${normalizedMonitors.map(monitor => html`
                 <button
                   class="monitor-button ${monitor.id === selectedMonitorId ? "active" : ""}"
-                  @click=${() => this._handleSelectMonitor(monitor.id)}
+                  @click=${async (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    console.log("Monitor button clicked:", monitor.id);
+                    await this._handleSelectMonitor(monitor.id);
+                  }}
                   ?disabled=${!this._isOnline}
                 >
                   <div class="monitor-button-content">
-                    <div class="monitor-name">${monitor.name || monitor.id}</div>
+                    <div class="monitor-name">${monitor.name}</div>
                     <div class="monitor-details">
-                      ${monitor.resolution || `${monitor.width}x${monitor.height}`}
+                      ${monitor.resolution}
                       ${monitor.is_primary ? html`<span class="primary-badge">Primary</span>` : ""}
                     </div>
                   </div>
@@ -1371,7 +2559,19 @@ class OpenctrolCard extends LitElement {
               <div class="info-text">
                 Currently selected: <strong>${selectedMonitorId}</strong>
               </div>
-            ` : ""}
+              <button
+                class="action-button"
+                style="width: 100%; margin-top: 16px;"
+                @click=${() => this._openFullscreenMonitor(selectedMonitorId)}
+                ?disabled=${!this._isOnline}
+              >
+                Open Fullscreen Monitor View
+              </button>
+            ` : html`
+              <div class="info-text" style="color: orange;">
+                No monitor selected. Please select a monitor to enable remote desktop capture.
+              </div>
+            `}
           ` : html`
             <div class="info-text">
               No monitors available. ${this._isOnline ? "Please wait for monitor list to load." : "Agent is offline."}
@@ -1415,37 +2615,52 @@ class OpenctrolCard extends LitElement {
             ${modifiers.map(key => html`
               <button
                 class="key-button ${this._latchedModifiers.has(key) ? "latched" : ""}"
-                @click=${() => {
-                  const timeout = this._keyHoldTimeouts.get(key);
-                  if (timeout) {
-                    clearTimeout(timeout);
-                    this._keyHoldTimeouts.delete(key);
-                    // It was a short tap, send the key
-                    this._handleKeyButton(key);
-                  } else {
-                    // No timeout means it was already held, just send
-                    this._handleKeyButton(key);
-                  }
-                }}
-                @mousedown=${() => {
+                @mousedown=${(e) => {
+                  e.preventDefault();
+                  const isModifier = ["CTRL", "ALT", "SHIFT", "WIN"].includes(key);
                   const timeout = setTimeout(() => {
-                    this._handleKeyHold(key);
+                    // Long press - toggle latch for modifiers
+                    if (isModifier) {
+                      this._handleKeyHold(key);
+                    }
                     this._keyHoldTimeouts.delete(key);
                   }, 500);
                   this._keyHoldTimeouts.set(key, timeout);
                 }}
-                @mouseup=${() => {
+                @mouseup=${(e) => {
+                  e.preventDefault();
                   const timeout = this._keyHoldTimeouts.get(key);
                   if (timeout) {
+                    // Short tap - send the key
                     clearTimeout(timeout);
                     this._keyHoldTimeouts.delete(key);
+                    this._handleKeyButton(key);
+                  } else {
+                    // Was a long press, already handled
                   }
                 }}
                 @mouseleave=${() => {
                   const timeout = this._keyHoldTimeouts.get(key);
                   if (timeout) {
+                    // Mouse left before timeout - treat as short tap
                     clearTimeout(timeout);
                     this._keyHoldTimeouts.delete(key);
+                    this._handleKeyButton(key);
+                  }
+                }}
+                @click=${(e) => {
+                  e.preventDefault();
+                  // Check if modifier is already latched - if so, unlatch it
+                  if (this._latchedModifiers.has(key)) {
+                    this._toggleModifierLatch(key);
+                    return;
+                  }
+                  // Fallback for touch devices - handle timeout if exists
+                  const timeout = this._keyHoldTimeouts.get(key);
+                  if (timeout) {
+                    clearTimeout(timeout);
+                    this._keyHoldTimeouts.delete(key);
+                    this._handleKeyButton(key);
                   }
                 }}
                 @touchstart=${(e) => {
@@ -1464,10 +2679,8 @@ class OpenctrolCard extends LitElement {
                     this._keyHoldTimeouts.delete(key);
                     // Short tap, send the key
                     this._handleKeyButton(key);
-                  } else {
-                    // Already held, just send
-                    this._handleKeyButton(key);
                   }
+                  // If no timeout, it means it was held and already toggled, don't send again
                 }}
               >
                 ${key}
@@ -1579,7 +2792,7 @@ class OpenctrolCard extends LitElement {
                   <div class="device-header">
                     <div class="device-name">
                       ${device.name || device.id}
-                      ${device.is_default ? html`<span class="default-badge">Default</span>` : ""}
+                      ${(device.is_default || device.isDefault || device.IsDefault || device.default) ? html`<span class="default-badge">Default</span>` : ""}
                     </div>
                   </div>
                   <div class="device-controls">
@@ -1605,7 +2818,7 @@ class OpenctrolCard extends LitElement {
                     >
                       ${device.muted ? "🔇" : "🔊"}
                     </button>
-                    ${!device.is_default ? html`
+                    ${!(device.is_default || device.isDefault || device.IsDefault || device.default) ? html`
                       <button
                         class="action-button set-default-button"
                         @click=${() => {
@@ -1615,7 +2828,9 @@ class OpenctrolCard extends LitElement {
                       >
                         Set Default
                       </button>
-                    ` : ""}
+                    ` : html`
+                      <span class="default-badge" style="margin-left: 8px;">Active</span>
+                    `}
                   </div>
                 </div>
               `)}
@@ -1699,6 +2914,16 @@ class OpenctrolCard extends LitElement {
           ${this._renderTopBar()}
           ${this._renderTouchpad()}
           ${this._renderButtonRow()}
+          ${this._isMobile && this._mobileKeyboardVisible ? html`
+            <div style="padding: 16px; background: #f5f5f5; border-top: 1px solid #e0e0e0;">
+              <div style="font-size: 12px; color: #666; margin-bottom: 8px;">
+                Mobile Keyboard Active - Type to send keys
+              </div>
+              <div style="font-size: 11px; color: #999;">
+                Space, Backspace, Enter, and letter/number keys are supported
+              </div>
+            </div>
+          ` : ""}
         </div>
         ${this._activePanel === "power" ? this._renderPowerPanel() : ""}
         ${this._activePanel === "monitor" ? this._renderMonitorPanel() : ""}

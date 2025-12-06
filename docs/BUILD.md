@@ -48,6 +48,35 @@ After building, the executable will be located at:
 - Debug: `src/Openctrol.Agent/bin/Debug/net8.0-windows/Openctrol.Agent.exe`
 - Release: `src/Openctrol.Agent/bin/Release/net8.0-windows/Openctrol.Agent.exe`
 
+## Publishing for Deployment
+
+To create a deployment-ready package, you need to **publish** the agent. The build script automates this process:
+
+### Using the Build Script (Recommended)
+
+```powershell
+# Build and publish with default settings (Release, win-x64, self-contained)
+.\tools\build-agent.ps1
+
+# Build with tests and create ZIP package
+.\tools\build-agent.ps1 -RunTests -CreateZip
+
+# Publish Debug build
+.\tools\build-agent.ps1 -Configuration Debug
+```
+
+### Manual Publish Command
+
+```powershell
+# Publish self-contained agent (recommended for deployment)
+dotnet publish src\Openctrol.Agent\Openctrol.Agent.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false
+
+# Output location:
+# src/Openctrol.Agent/bin/Release/net8.0-windows/win-x64/publish/
+```
+
+**Important**: The installer script automatically finds published binaries if they're in the standard location.
+
 ## Dependencies
 
 The project uses the following NuGet packages:
@@ -71,12 +100,30 @@ The service will start and listen on the configured port (default: 44325).
 
 ## Installing as Windows Service
 
-See the [Setup Guide](../setup/README.md) for complete installation instructions.
+### Quick Install (Automated)
+
+1. **Build and publish the agent:**
+   ```powershell
+   .\tools\build-agent.ps1
+   ```
+
+2. **Run the installer (as Administrator):**
+   ```powershell
+   powershell -ExecutionPolicy Bypass -File .\setup\install.ps1
+   ```
+
+The installer will automatically find the published binaries in the standard location.
+
+### Manual Install
+
+If you've published to a custom location:
 
 ```powershell
-# Run as Administrator
-powershell -ExecutionPolicy Bypass -File .\setup\install.ps1
+# Specify source path explicitly
+.\setup\install.ps1 -SourcePath "C:\MyBuild\publish"
 ```
+
+See the [Setup Guide](../setup/README.md) for complete installation instructions and options.
 
 ## Troubleshooting
 

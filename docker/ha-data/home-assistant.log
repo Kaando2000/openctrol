@@ -1,0 +1,81 @@
+2025-12-05 14:51:21.424 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
+2025-12-05 14:51:36.713 ERROR (MainThread) [homeassistant.helpers.translation] Error while parsing localized (tr) string component.group.issues.uoms_not_matching_device_class.description
+2025-12-05 14:51:47.245 ERROR (MainThread) [custom_components.openctrol.config_flow] Unexpected error during config flow: Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 1268, in _wrap_create_connection
+    sock = await aiohappyeyeballs.start_connection(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/aiohappyeyeballs/impl.py", line 122, in start_connection
+    raise first_exception
+  File "/usr/local/lib/python3.13/site-packages/aiohappyeyeballs/impl.py", line 73, in start_connection
+    sock = await _connect_sock(
+           ^^^^^^^^^^^^^^^^^^^^
+    ...<6 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/aiohappyeyeballs/impl.py", line 208, in _connect_sock
+    await loop.sock_connect(sock, address)
+  File "/usr/local/lib/python3.13/asyncio/selector_events.py", line 641, in sock_connect
+    return await fut
+           ^^^^^^^^^
+  File "/usr/local/lib/python3.13/asyncio/selector_events.py", line 681, in _sock_connect_cb
+    raise OSError(err, f'Connect call failed {address}')
+ConnectionRefusedError: [Errno 111] Connect call failed ('192.168.1.52', 44325)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/config/custom_components/openctrol/config_flow.py", line 64, in async_step_user
+    await client.async_get_health()
+  File "/config/custom_components/openctrol/api.py", line 77, in async_get_health
+    return await self._get_json(f"{self.base_url}/api/v1/health")
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/config/custom_components/openctrol/api.py", line 47, in _get_json
+    async with self._session.get(
+               ~~~~~~~~~~~~~~~~~^
+        url, headers=headers, timeout=aiohttp.ClientTimeout(total=10)
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ) as response:
+    ^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/client.py", line 1510, in __aenter__
+    self._resp: _RetType = await self._coro
+                           ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/client.py", line 779, in _request
+    resp = await handler(req)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/client.py", line 734, in _connect_and_send_request
+    conn = await self._connector.connect(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        req, traces=traces, timeout=real_timeout
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 642, in connect
+    proto = await self._create_connection(req, traces, timeout)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 1209, in _create_connection
+    _, proto = await self._create_direct_connection(req, traces, timeout)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 1581, in _create_direct_connection
+    raise last_exc
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 1550, in _create_direct_connection
+    transp, proto = await self._wrap_create_connection(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<7 lines>...
+    )
+    ^
+  File "/usr/local/lib/python3.13/site-packages/aiohttp/connector.py", line 1291, in _wrap_create_connection
+    raise client_error(req.connection_key, exc) from exc
+aiohttp.client_exceptions.ClientConnectorError: Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]
+2025-12-05 14:59:12.375 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+Error: Failed to execute 'define' on 'CustomElementRegistry': the name "openctrol-card" has already been used with this registry
+A.define (node_modules/@webcomponents/scoped-custom-element-registry/src/scoped-custom-element-registry.ts:180:12)
+/local/openctrol/openctrol-card.js:2915:16
+2025-12-05 14:59:49.224 WARNING (MainThread) [custom_components.openctrol] Set default device failed (may require admin or device limitation): API request failed with status 500: {"error":"audio_default_device_failed","details":"Failed to set default audio device"}
+2025-12-05 14:59:51.387 WARNING (MainThread) [custom_components.openctrol] Set default device failed (may require admin or device limitation): API request failed with status 500: {"error":"audio_default_device_failed","details":"Failed to set default audio device"}
+2025-12-05 14:59:51.721 WARNING (MainThread) [custom_components.openctrol] Set default device failed (may require admin or device limitation): API request failed with status 500: {"error":"audio_default_device_failed","details":"Failed to set default audio device"}
+2025-12-05 14:59:51.856 WARNING (MainThread) [custom_components.openctrol] Set default device failed (may require admin or device limitation): API request failed with status 500: {"error":"audio_default_device_failed","details":"Failed to set default audio device"}
+2025-12-05 15:00:32.205 ERROR (MainThread) [custom_components.openctrol.sensor] Error requesting openctrol data: Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]
