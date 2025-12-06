@@ -1,853 +1,787 @@
-1. Finished application: what 1.0 should do
+# Openctrol Architecture
 
-A single Windows Service (OpenctrolAgent) that:
+This document provides a comprehensive overview of how the Openctrol system works, from high-level architecture to implementation details.
 
-Starts at boot and runs under a high-privilege service account (or LocalSystem) so it works:
+## Table of Contents
 
-on login screen,
+1. [System Overview](#system-overview)
+2. [Component Architecture](#component-architecture)
+3. [Session 0 Isolation & Token Impersonation](#session-0-isolation--token-impersonation)
+4. [Screen Capture](#screen-capture)
+5. [Input Injection](#input-injection)
+6. [Communication Protocols](#communication-protocols)
+7. [Security Model](#security-model)
+8. [Audio Control](#audio-control)
+9. [Power Management](#power-management)
+10. [System State Monitoring](#system-state-monitoring)
 
-when the desktop is locked,
+---
 
-on normal desktop.
+## System Overview
 
-Exposes:
+Openctrol is a Windows service that provides remote desktop control, audio management, and power control for Home Assistant. It consists of three main components:
 
-an HTTPS REST API on the LAN (/api/v1/...) for:
+1. **Agent** (C# Windows Service) - Runs on the Windows machine, provides APIs and WebSocket streaming
+2. **Home Assistant Integration** (Python) - Custom component that connects to the agent
+3. **Frontend Card** (JavaScript) - Custom Lovelace card for Home Assistant UI
 
-health,
+```
+┌─────────────────┐         ┌──────────────────┐         ┌─────────────────┐
+│  Home Assistant │◄───────►│  Openctrol Agent │◄───────►│  Windows Desktop │
+│   (Python/JS)    │  HTTP   │   (C# Service)   │  GDI    │   (Session 1+)   │
+└─────────────────┘  WebSocket └──────────────────┘  SendInput └─────────────────┘
+```
 
-creating/ending desktop sessions,
+### Key Capabilities
 
-power (restart/shutdown),
+- **Remote Desktop**: Real-time screen capture and streaming (works on login screen, locked desktop, and normal desktop)
+- **Input Injection**: Mouse and keyboard input injection with multi-monitor support
+- **Audio Control**: Master volume, per-app volume, and device routing
+- **Power Management**: Remote restart and shutdown
+- **Session 0 Escape**: Works even when Windows is at the login screen or locked
 
-audio control,
+---
 
-a WebSocket endpoint (/ws/desktop) that:
+## Component Architecture
 
-streams screen frames (JPEG),
+### Agent Structure
 
-receives mouse + keyboard events.
+The agent is organized into clear modules:
 
-Implements remote desktop:
+```
+Agent/
+├── src/
+│   ├── Program.cs                    # Entry point, service host setup
+│   ├── Hosting/                      # Service lifecycle management
+│   ├── Config/                       # Configuration management
+│   ├── Logging/                      # Multi-target logging (Event Log, File, Console)
+│   ├── RemoteDesktop/                # Screen capture and streaming
+│   │   ├── RemoteDesktopEngine.cs    # Main capture loop
+│   │   ├── DesktopContextSwitcher.cs # Session 0 escape via token impersonation
+│   │   ├── CaptureContext.cs         # GDI resource management
+│   │   └── CrossSessionCaptureContext.cs # Cross-session capture support
+│   ├── Input/                        # Input injection
+│   │   └── InputDispatcher.cs       # SendInput wrapper
+│   ├── Web/                          # HTTP/WebSocket server
+│   │   ├── ControlApiServer.cs       # Kestrel HTTP server
+│   │   ├── DesktopWebSocketHandler.cs # WebSocket frame streaming
+│   │   └── SessionBroker.cs         # Session management
+│   ├── Security/                     # Authentication and authorization
+│   ├── SystemState/                  # Desktop state detection
+│   ├── Audio/                        # Audio device and session control
+│   └── Power/                        # System power control
+└── tests/                            # Unit tests
+```
 
-Captures the active console desktop (including Winlogon).
+### Home Assistant Integration Structure
 
-Encodes frames to JPEG and sends over WS.
+```
+HomeAssistant/
+├── custom_components/
+│   └── openctrol/
+│       ├── __init__.py               # Integration setup, service handlers
+│       ├── config_flow.py            # Configuration UI
+│       ├── api.py                    # REST API client
+│       ├── ws.py                     # WebSocket client
+│       ├── sensor.py                 # Status sensor entity
+│       └── services.yaml             # Service definitions
+└── www/
+    └── openctrol/
+        └── openctrol-card.js         # Frontend card (LitElement)
+```
 
-Injects mouse/keyboard events using SendInput.
+---
 
-Supports multi-monitor:
+## Session 0 Isolation & Token Impersonation
 
-Enumerates monitors.
+### The Problem
 
-Streams one selected monitor at a time (configurable via WS messages).
+Windows Services run in **Session 0** (isolated session) by default. This means:
+- Services cannot see the user's desktop (Session 1+)
+- Services cannot interact with the login screen
+- Services cannot access user-specific resources
+- GDI capture APIs return a "ghost" monitor (WinDisc) instead of real monitors
 
-Provides power controls:
+### The Solution: Token Impersonation
 
-Restart / shutdown via Windows APIs.
+The `DesktopContextSwitcher` class implements **token impersonation** to escape Session 0:
 
-Provides audio controls:
+#### Step 1: Get Active Console Session
+```csharp
+uint sessionId = WTSGetActiveConsoleSessionId();
+```
+Gets the session ID of the user currently logged in at the console (Session 1+).
 
-List output devices, default device.
+#### Step 2: Query User Token
+```csharp
+WTSQueryUserToken(sessionId, out IntPtr hToken)
+```
+Retrieves the user's security token for that session.
 
-Adjust master and per-app volumes.
+#### Step 3: Duplicate Token
+```csharp
+DuplicateTokenEx(
+    hToken,
+    TOKEN_QUERY | TOKEN_IMPERSONATE | TOKEN_DUPLICATE,
+    ref tokenAttributes,
+    SECURITY_IMPERSONATION_LEVEL.SecurityImpersonation,
+    TOKEN_TYPE.TokenImpersonation,
+    out hImpersonationToken)
+```
+Creates an impersonation token that can be used to impersonate the user.
 
-Change default output device.
+#### Step 4: Set Thread Token
+```csharp
+SetThreadToken(IntPtr.Zero, hImpersonationToken)
+```
+Sets the current thread's token to impersonate the user. Now all API calls on this thread run with the user's security context.
 
-Route per-app audio to specific output devices.
+#### Step 5: Access Desktop
+```csharp
+OpenInputDesktop(...)  // Now works! Can access user's desktop
+EnumDisplayMonitors(...)  // Now sees real monitors!
+```
 
-Is reliable:
+### Implementation Flow
 
-Recovers from capture failures.
+```
+Service (Session 0, LocalSystem)
+    ↓
+DesktopContextSwitcher.ImpersonateActiveUser()
+    ↓
+WTSGetActiveConsoleSessionId() → Session 1
+    ↓
+WTSQueryUserToken() → User Token
+    ↓
+DuplicateTokenEx() → Impersonation Token
+    ↓
+SetThreadToken() → Thread now impersonates user
+    ↓
+OpenInputDesktop() → Success! Can access user desktop
+    ↓
+EnumDisplayMonitors() → Success! Sees real monitors
+```
 
-Handles RDP engine restart internally.
+### Cleanup
 
-Works across reboots and logon/logoff/lock events.
+When done, the impersonation is reverted:
+```csharp
+SetThreadToken(IntPtr.Zero, IntPtr.Zero)  // Remove token
+CloseHandle(hImpersonationToken)           // Close handle
+```
 
-2. Repo / solution layout (final state)
+This is done in `Dispose()` to prevent handle leaks.
 
-At repo root (on your E:\Proje\openctrol and GitHub repo):
+---
 
-openctrol/
-  src/
-    Openctrol.Agent/
-      Openctrol.Agent.csproj
-      Program.cs
-      Hosting/
-        AgentHost.cs
-      Config/
-        AgentConfig.cs
-        JsonConfigManager.cs
-      Logging/
-        ILogger.cs
-        EventLogLogger.cs
-        FileLogger.cs
-        CompositeLogger.cs
-      Security/
-        SessionToken.cs
-        ISecurityManager.cs
-        SecurityManager.cs
-      SystemState/
-        DesktopState.cs
-        SystemStateSnapshot.cs
-        ISystemStateMonitor.cs
-        SystemStateMonitor.cs
-      RemoteDesktop/
-        RemoteDesktopStatus.cs
-        MonitorInfo.cs
-        RemoteFrame.cs
-        FramePixelFormat.cs
-        IFrameSubscriber.cs
-        IRemoteDesktopEngine.cs
-        RemoteDesktopEngine.cs      // GDI-based capture
-        CaptureContext.cs            // Reusable GDI resources for capture
-      Input/
-        PointerEvent.cs
-        PointerEventKind.cs
-        MouseButton.cs
-        MouseButtonAction.cs
-        KeyboardEvent.cs
-        KeyboardEventKind.cs
-        KeyModifiers.cs
-        InputDispatcher.cs
-      Web/
-        IControlApiServer.cs
-        ControlApiServer.cs
-        DesktopWebSocketHandler.cs
-        ISessionBroker.cs
-        SessionBroker.cs
-        DesktopSession.cs
-        Dtos/
-          HealthDto.cs
-          CreateDesktopSessionDto.cs
-          PowerDto.cs
-          AudioDtos.cs
-      Audio/
-        IAudioManager.cs
-        AudioManager.cs
-        AudioState.cs
-        AudioDeviceInfo.cs
-        AudioSessionInfo.cs
-      Power/
-        IPowerManager.cs
-        PowerManager.cs
-  tools/
-    install-service.ps1
-    uninstall-service.ps1
-  docs/
-    ARCHITECTURE.md
-    API.md
-    BUILD.md
-  tests/
-    Openctrol.Agent.Tests/
-      ...
-README.md
+## Screen Capture
 
+### Capture Method: GDI (Graphics Device Interface)
 
-Everything lives in one service process (Openctrol.Agent) but structured into clear modules.
+The agent uses GDI-based screen capture because:
+- ✅ Works on login screen (Winlogon desktop)
+- ✅ Works on locked desktop
+- ✅ Works on normal desktop
+- ✅ No special drivers required
+- ✅ Cross-session support with token impersonation
 
-3. Foundation: hosting, config, logging
-3.1. Hosting (Program.cs + Hosting/AgentHost.cs)
+### Capture Process
 
-Use .NET Generic Host with Windows service integration:
+1. **Desktop Context Switch**: Before capture, switch to the active desktop using `DesktopContextSwitcher`
+2. **Monitor Selection**: Select the monitor to capture (default: primary monitor)
+3. **GDI Capture**:
+   ```csharp
+   // Get device context for the monitor
+   IntPtr hdcScreen = CreateDC("DISPLAY", monitorName, null, IntPtr.Zero);
+   
+   // Create compatible bitmap
+   IntPtr hBitmap = CreateCompatibleBitmap(hdcScreen, width, height);
+   
+   // Copy screen to bitmap
+   BitBlt(hdcMem, 0, 0, width, height, hdcScreen, x, y, SRCCOPY);
+   
+   // Convert to .NET Bitmap
+   Bitmap bitmap = Image.FromHbitmap(hBitmap);
+   ```
+4. **JPEG Encoding**: Encode bitmap to JPEG using `System.Drawing.Imaging.ImageCodecInfo`
+5. **Frame Distribution**: Send to all WebSocket subscribers
 
-public static class Program
+### Capture Loop
+
+The `RemoteDesktopEngine` runs a dedicated capture thread:
+
+```csharp
+while (!cancellationToken.IsCancellationRequested)
 {
-    public static void Main(string[] args)
+    try
     {
-        Host.CreateDefaultBuilder(args)
-            .UseWindowsService()
-            .ConfigureServices((ctx, services) =>
+        // Switch to active desktop context
+        _desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
+        {
+            // Capture frame
+            var frame = _captureContext.CaptureFrame(selectedMonitor);
+            
+            // Encode to JPEG
+            var jpegBytes = EncodeToJpeg(frame);
+            
+            // Create RemoteFrame
+            var remoteFrame = new RemoteFrame
             {
-                services.AddSingleton<IConfigManager, JsonConfigManager>();
-                services.AddSingleton<ILogger, CompositeLogger>();
-                services.AddSingleton<ISecurityManager, SecurityManager>();
-                services.AddSingleton<ISystemStateMonitor, SystemStateMonitor>();
-                services.AddSingleton<IRemoteDesktopEngine, RemoteDesktopEngine>();
-                services.AddSingleton<IAudioManager, AudioManager>();
-                services.AddSingleton<IPowerManager, PowerManager>();
-                services.AddSingleton<IControlApiServer, ControlApiServer>();
-
-                services.AddHostedService<AgentHost>();
-            })
-            .Build()
-            .Run();
+                Width = frame.Width,
+                Height = frame.Height,
+                Format = FramePixelFormat.Jpeg,
+                Payload = jpegBytes,
+                SequenceNumber = Interlocked.Increment(ref _sequenceNumber),
+                Timestamp = DateTimeOffset.UtcNow
+            };
+            
+            // Notify subscribers
+            NotifySubscribers(remoteFrame);
+        }, systemState);
     }
+    catch (Exception ex)
+    {
+        // Handle errors, enter degraded state if repeated failures
+    }
+    
+    // Sleep to maintain target FPS
+    await Task.Delay(frameInterval, cancellationToken);
 }
+```
 
+### Resource Management
 
-AgentHost : BackgroundService:
+The `CaptureContext` class manages GDI resources to prevent leaks:
+- Reuses `HDC` (device context) handles
+- Reuses `HBITMAP` handles
+- Properly disposes all resources in `Dispose()`
 
-On start: start RDE, API server.
+### Multi-Monitor Support
 
-On stop: stop API server, RDE.
+- Enumerates monitors using `EnumDisplayMonitors` and `System.Windows.Forms.Screen.AllScreens`
+- Combines results from both APIs for maximum compatibility
+- Allows selection of specific monitor via WebSocket message
+- Supports absolute mouse positioning across monitors
 
-3.2. Config (Config/AgentConfig.cs, JsonConfigManager.cs)
+---
 
-AgentConfig (final shape):
+## Input Injection
 
-public sealed class AgentConfig
+### Input Method: SendInput API
+
+The agent uses Windows `SendInput` API for input injection:
+- ✅ Low-level, works at kernel level
+- ✅ Works on login screen and locked desktop
+- ✅ Supports both relative and absolute mouse positioning
+- ✅ Supports keyboard events with modifiers
+
+### Pointer Events
+
+#### Relative Movement
+```csharp
+INPUT input = new INPUT
 {
-    public string AgentId { get; set; } = "";
-    public int HttpPort { get; set; } = 44325;
-    public int MaxSessions { get; set; } = 1;
-    public string CertPath { get; set; } = "";
-    public string CertPasswordEncrypted { get; set; } = "";
-    public int TargetFps { get; set; } = 30;
-    public IList<string> AllowedHaIds { get; set; } = new List<string>();
-    public string ApiKey { get; set; } = ""; // API key for REST endpoint authentication (empty = no auth required)
-}
+    type = INPUT_TYPE.MOUSE,
+    u = new InputUnion
+    {
+        mi = new MOUSEINPUT
+        {
+            dx = deltaX,
+            dy = deltaY,
+            dwFlags = MOUSEEVENTF.MOVE,
+        }
+    }
+};
+SendInput(1, new[] { input }, Marshal.SizeOf<INPUT>());
+```
 
+#### Absolute Movement
+Absolute coordinates are normalized to 0-65535 range (Windows requirement):
+```csharp
+// Map normalized coordinates (0-65535) to monitor bounds
+var pixelX = (normalizedX / 65535.0) * monitorWidth;
+var pixelY = (normalizedY / 65535.0) * monitorHeight;
 
-JsonConfigManager:
+// Convert to virtual desktop coordinates
+var virtualX = monitorBounds.X + pixelX;
+var virtualY = monitorBounds.Y + pixelY;
 
-Reads %ProgramData%\Openctrol\config.json.
+// Scale to 0-65535 for SendInput
+var finalX = ((virtualX - minX) / virtualWidth) * 65535;
+var finalY = ((virtualY - minY) / virtualHeight) * 65535;
 
-Creates default if missing:
-
-Random AgentId (GUID).
-
-Default port 44325.
-
-Reload() re-reads file.
-
-3.3. Logging (Logging/ILogger.cs, EventLogLogger.cs, FileLogger.cs, CompositeLogger.cs)
-
-ILogger:
-
-public interface ILogger
+INPUT input = new INPUT
 {
-    void Info(string message);
-    void Warn(string message);
-    void Error(string message, Exception? ex = null);
-    void Debug(string message);
-}
+    type = INPUT_TYPE.MOUSE,
+    u = new InputUnion
+    {
+        mi = new MOUSEINPUT
+        {
+            dx = finalX,
+            dy = finalY,
+            dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE,
+        }
+    }
+};
+```
 
-
-EventLogLogger:
-
-Logs to Windows Event Log source OpenctrolAgent.
-
-FileLogger:
-
-Appends to daily rolling log file in %ProgramData%\Openctrol\logs.
-
-CompositeLogger:
-
-Fans out to both.
-
-4. Shafts & wiring: state, remote desktop, WS, REST
-4.1. System state (SystemState/)
-
-Models:
-
-public enum DesktopState { Unknown, LoginScreen, Desktop, Locked }
-
-public sealed class SystemStateSnapshot
+#### Button Events
+```csharp
+MOUSEEVENTF flags = button switch
 {
-    public int ActiveSessionId { get; init; }
-    public DesktopState DesktopState { get; init; }
-}
+    MouseButton.Left => MOUSEEVENTF.LEFTDOWN,
+    MouseButton.Right => MOUSEEVENTF.RIGHTDOWN,
+    MouseButton.Middle => MOUSEEVENTF.MIDDLEDOWN,
+    _ => 0
+};
+```
 
+### Keyboard Events
 
-Interface:
-
-public interface ISystemStateMonitor
+#### Key Down/Up
+```csharp
+INPUT input = new INPUT
 {
-    SystemStateSnapshot GetCurrent();
-    event EventHandler<SystemStateSnapshot>? StateChanged;
-}
+    type = INPUT_TYPE.KEYBOARD,
+    u = new InputUnion
+    {
+        ki = new KEYBDINPUT
+        {
+            wVk = (ushort)keyCode,
+            dwFlags = isKeyDown ? 0 : KEYEVENTF.KEYUP,
+        }
+    }
+};
+```
 
+#### Text Input
+For text input, uses `VkKeyScanEx` to map characters to virtual key codes with current keyboard layout:
+```csharp
+short vkScan = VkKeyScanEx(character, keyboardLayout);
+int vk = vkScan & 0xFF;
+int shiftState = (vkScan >> 8) & 0xFF;
 
-Implementation SystemStateMonitor:
+// Send modifiers if needed
+if ((shiftState & 1) != 0) SendKey(VK_SHIFT, true);
+if ((shiftState & 2) != 0) SendKey(VK_CONTROL, true);
+// ... etc
 
-Uses WTS APIs (WTSGetActiveConsoleSessionId etc.) and desktop APIs:
+// Send the key
+SendKey(vk, true);
+SendKey(vk, false);
 
-Detect active session.
+// Release modifiers
+// ...
+```
 
-Detect Winlogon vs user desktop vs locked.
+### Desktop Context for Input
 
-Periodically updates snapshot and raises StateChanged.
-
-4.2. Remote desktop core (RemoteDesktop/)
-Models
-public sealed class RemoteDesktopStatus
+All input operations are wrapped with `DesktopContextSwitcher` to ensure they target the correct desktop:
+```csharp
+_desktopContextSwitcher.ExecuteInActiveDesktopContext(() =>
 {
-    public bool IsRunning { get; init; }
-    public DateTimeOffset LastFrameAt { get; init; }
-    public string State { get; init; } = "unknown"; // login_screen / desktop / locked
-}
+    _inputDispatcher.DispatchPointer(pointerEvent);
+}, systemState);
+```
 
-public sealed class MonitorInfo
-{
-    public string Id { get; init; } = "";  // e.g. "\\.\DISPLAY1"
-    public string Name { get; init; } = "";
-    public int Width { get; init; }
-    public int Height { get; init; }
-    public bool IsPrimary { get; init; }
-}
+---
 
-public enum FramePixelFormat { Jpeg }
+## Communication Protocols
 
-public sealed class RemoteFrame
-{
-    public int Width { get; init; }
-    public int Height { get; init; }
-    public FramePixelFormat Format { get; init; }
-    public ReadOnlyMemory<byte> Payload { get; init; }  // JPEG bytes
-    public long SequenceNumber { get; init; }
-    public DateTimeOffset Timestamp { get; init; }
-}
+### REST API
 
-Interfaces
-public interface IFrameSubscriber
-{
-    void OnFrame(RemoteFrame frame);
-}
+The agent exposes a REST API on port 44325 (configurable):
 
-public interface IRemoteDesktopEngine
-{
-    void Start();
-    void Stop();
-
-    RemoteDesktopStatus GetStatus();
-    IReadOnlyList<MonitorInfo> GetMonitors();
-    void SelectMonitor(string monitorId);
-
-    void RegisterFrameSubscriber(IFrameSubscriber subscriber);
-    void UnregisterFrameSubscriber(IFrameSubscriber subscriber);
-
-    void InjectPointer(PointerEvent evt);
-    void InjectKey(KeyboardEvent evt);
-}
-
-Implementation: RemoteDesktopEngine
-
-Uses GDI capture for v1 (works on login screen, locked desktop).
-
-Uses CaptureContext for reusable GDI resources (HDC, HBITMAP, encoder) to prevent resource leaks.
-
-Core behaviour:
-
-On Start:
-
-Hook into ISystemStateMonitor.StateChanged.
-
-Create CancellationTokenSource for proper cancellation support.
-
-Start capture thread with cancellation token:
-
-1 loop per frame:
-
-Check cancellation token.
-
-Capture active monitor with BitBlt (using reusable CaptureContext).
-
-Encode to JPEG.
-
-Update LastFrameAt (with lock protection).
-
-Call OnFrame for all subscribers.
-
-Target config.TargetFps, but drop if slow.
-
-On repeated capture failures (5+), enter degraded state (reported in health endpoint).
-
-On Stop:
-
-Cancel token to signal capture thread.
-
-Stop thread and wait for completion.
-
-Dispose CaptureContext and all GDI resources.
-
-GetMonitors:
-
-Use EnumDisplayMonitors / System.Windows.Forms.Screen to list monitors.
-
-SelectMonitor:
-
-Update internal CurrentMonitorId.
-
-InjectPointer / InjectKey:
-
-Delegate to InputDispatcher (see below).
-
-4.3. Input (Input/)
-Models
-public enum PointerEventKind { MoveRelative, MoveAbsolute, Button, Wheel }
-public enum MouseButton { Left, Right, Middle }
-public enum MouseButtonAction { Down, Up }
-
-public sealed class PointerEvent
-{
-    public PointerEventKind Kind { get; init; }
-    public int Dx { get; init; }
-    public int Dy { get; init; }
-    public int? AbsoluteX { get; init; }
-    public int? AbsoluteY { get; init; }
-    public MouseButton? Button { get; init; }
-    public MouseButtonAction? ButtonAction { get; init; }
-    public int WheelDeltaX { get; init; }
-    public int WheelDeltaY { get; init; }
-}
-
-[Flags]
-public enum KeyModifiers { None = 0, Ctrl = 1, Alt = 2, Shift = 4, Win = 8 }
-
-public enum KeyboardEventKind { KeyDown, KeyUp, Text }
-
-public sealed class KeyboardEvent
-{
-    public KeyboardEventKind Kind { get; init; }
-    public int? KeyCode { get; init; } // virtual key
-    public string? Text { get; init; }
-    public KeyModifiers Modifiers { get; init; }
-}
-
-Implementation: InputDispatcher
-
-P/Invoke SendInput, MapVirtualKey, etc.
-
-Responsibilities:
-
-Convert PointerEvent → mouse moves, clicks, wheel.
-
-Convert KeyboardEvent → series of keyboard SendInput calls.
-
-Handle Text events with layout-aware mapping (via VkKeyScanEx).
-
-Absolute mouse positioning uses SendInput with MOUSEEVENTF.ABSOLUTE for proper multi-monitor and DPI support.
-
-Automatic modifier key release on keyboard event failures to prevent stuck keys.
-
-RemoteDesktopEngine.InjectPointer/InjectKey simply call into InputDispatcher.
-
-4.4. Security & sessions (Security/)
-Models & interface
-public sealed class SessionToken
-{
-    public string Token { get; init; } = "";
-    public string HaId { get; init; } = "";
-    public DateTimeOffset ExpiresAt { get; init; }
-}
-
-public interface ISecurityManager
-{
-    bool IsHaAllowed(string haId);
-    SessionToken IssueDesktopSessionToken(string haId, TimeSpan ttl);
-    bool TryValidateDesktopSessionToken(string token, out SessionToken validated);
-}
-
-Implementation: SecurityManager
-
-Uses in-memory dictionary for active tokens.
-
-Implements IDisposable to properly dispose cleanup timer.
-
-Empty allowlist = deny-all by default (secure by default).
-
-Rate limiting: 5 validation failures per minute per client.
-
-Background timer cleans up expired tokens every minute.
-
-4.5. Session broker (can live in Web/ or own folder)
-public sealed class DesktopSession
-{
-    public string SessionId { get; init; } = "";
-    public string HaId { get; init; } = "";
-    public DateTimeOffset ExpiresAt { get; init; }
-    public DateTimeOffset StartedAt { get; init; }
-    public bool IsActive { get; set; }
-}
-
-public interface ISessionBroker
-{
-    DesktopSession StartDesktopSession(string haId, TimeSpan ttl);
-    bool TryGetSession(string sessionId, out DesktopSession session);
-    void EndSession(string sessionId);
-    IReadOnlyList<DesktopSession> GetActiveSessions();
-}
-
-
-Enforces MaxSessions limit.
-
-Cleans expired sessions with background timer.
-
-Implements IDisposable to properly dispose cleanup timer.
-
-4.6. Web: REST + WebSocket (Web/)
-4.6.1. Control API server
-
-IControlApiServer:
-
-public interface IControlApiServer
-{
-    void Start();
-    Task StopAsync();
-}
-
-
-ControlApiServer:
-
-Wraps a Kestrel-hosted ASP.NET Core app.
-
-Listens on AgentConfig.HttpPort on LAN.
-
-Sets up:
-
+#### Health Check
+```
 GET /api/v1/health
+```
+Returns agent status, uptime, desktop state, active sessions.
 
+#### Create Desktop Session
+```
 POST /api/v1/sessions/desktop
+Body: { "ha_id": "home-assistant", "ttl_seconds": 900 }
+Response: { "session_id": "...", "websocket_url": "ws://...", "expires_at": "..." }
+```
 
-POST /api/v1/sessions/desktop/{id}/end
+#### End Session
+```
+POST /api/v1/sessions/desktop/{sessionId}/end
+```
 
+#### Power Control
+```
 POST /api/v1/power
+Body: { "action": "restart" | "shutdown" }
+```
 
+#### Audio Control
+```
 GET /api/v1/audio/state
-
 POST /api/v1/audio/device
-
 POST /api/v1/audio/session
+```
 
-/ws/desktop WebSocket
+### WebSocket Protocol
 
-4.6.2. DTOs (Web/Dtos/)
+#### Connection
+```
+ws://<agent-ip>:44325/api/v1/rd/session?sess=<sessionId>&token=<token>
+```
 
-HealthDto:
+#### Authentication
+- Session ID and token are validated via `ISecurityManager`
+- Invalid tokens result in immediate connection close
 
-public sealed class HealthDto
-{
-    public string AgentId { get; init; } = "";
-    public long UptimeSeconds { get; init; }
-    public RemoteDesktopHealthDto RemoteDesktop { get; init; } = new();
-    public int ActiveSessions { get; init; }
-}
-
-public sealed class RemoteDesktopHealthDto
-{
-    public bool IsRunning { get; init; }
-    public DateTimeOffset LastFrameAt { get; init; }
-    public string State { get; init; } = "unknown";
-}
-
-
-CreateDesktopSessionRequest/Response:
-
-public sealed class CreateDesktopSessionRequest
-{
-    public string HaId { get; init; } = "";
-    public int TtlSeconds { get; init; } = 900;
-}
-
-public sealed class CreateDesktopSessionResponse
-{
-    public string SessionId { get; init; } = "";
-    public string WebSocketUrl { get; init; } = "";
-    public DateTimeOffset ExpiresAt { get; init; }
-}
-
-
-PowerRequest:
-
-public sealed class PowerRequest
-{
-    public string Action { get; init; } = ""; // "restart" | "shutdown"
-}
-
-
-Audio DTOs for /audio/state, /audio/device, /audio/session.
-
-4.6.3. WebSocket handler (DesktopWebSocketHandler.cs)
-
-Responsibilities:
-
-Handle path /ws/desktop.
-
-Parse query: ?sess=<sessionId>&token=<token>.
-
-Validate token via ISecurityManager.
-
-On success:
-
-Send hello JSON:
-
+#### Hello Message
+On successful connection, agent sends:
+```json
 {
   "type": "hello",
-  "agent_id": "<AgentId>",
-  "session_id": "<sess>",
+  "agent_id": "guid",
+  "session_id": "session-id",
   "version": "1.0",
   "monitors": [
-    { "id": "DISPLAY1", "name": "Primary", "width": 1920, "height": 1080, "is_primary": true }
+    {
+      "id": "DISPLAY1",
+      "name": "Primary",
+      "width": 1920,
+      "height": 1080,
+      "is_primary": true
+    }
   ]
 }
+```
 
+#### Frame Messages (Binary)
+Binary WebSocket messages with format:
+```
+[4 bytes: "OFRA" magic]
+[4 bytes: width (int)]
+[4 bytes: height (int)]
+[4 bytes: format (1 = JPEG)]
+[remaining: JPEG bytes]
+```
 
-Subscribe as IFrameSubscriber to IRemoteDesktopEngine.
+#### Input Messages (JSON)
+```json
+// Mouse move (relative)
+{ "type": "pointer_move", "dx": 10, "dy": 5 }
 
-Start a loop:
+// Mouse move (absolute, normalized 0-65535)
+{ "type": "pointer_move", "absolute": true, "x": 32768, "y": 32768 }
 
-Receive messages:
+// Mouse click
+{ "type": "pointer_click", "button": "left" }
 
-parse JSON for:
+// Mouse button down/up
+{ "type": "pointer_button", "button": "right", "action": "down" }
 
-pointer_move, pointer_button, pointer_wheel,
+// Keyboard
+{ "type": "key", "key_code": 65, "down": true }
 
-key, text,
+// Text input
+{ "type": "text", "text": "Hello" }
 
-monitor_select,
+// Monitor selection
+{ "type": "monitor_select", "monitor_id": "DISPLAY2" }
+```
 
-quality.
+---
 
-Convert to PointerEvent / KeyboardEvent and call engine.
+## Security Model
 
-Send frames:
+### API Key Authentication
 
-binary WS messages with header + JPEG payload.
+REST endpoints (except `/api/v1/health`) can require an API key:
+- Configured in `AgentConfig.ApiKey`
+- Sent via header: `X-Openctrol-Key: <key>` or `Authorization: Bearer <key>`
+- Uses constant-time comparison to prevent timing attacks
+- If not configured, authentication is disabled (development mode)
 
-4.6.4. Frame binary format
+### Session Tokens
 
-Final decision: simple header + JPEG body:
+Desktop sessions require a token:
+- Issued by `ISecurityManager.IssueDesktopSessionToken()`
+- Contains: token string, HA ID, expiration time
+- Validated on WebSocket connection
+- Tokens expire after TTL (default: 900 seconds)
+- Background timer cleans up expired tokens
 
-Binary WS message layout:
+### Home Assistant ID Allowlist
 
-4 bytes: ASCII "OFRA" (Openctrol Frame)
+- `AgentConfig.AllowedHaIds` contains list of allowed Home Assistant instance IDs
+- Empty list = deny-all (secure by default)
+- Only Home Assistant instances with IDs in the allowlist can create sessions
+- Validated when creating desktop session
 
-4 bytes: int width
+### Rate Limiting
 
-4 bytes: int height
+- Token validation failures are rate-limited: 5 failures per minute per client IP
+- Prevents brute-force attacks on session tokens
 
-4 bytes: int format (1 = JPEG)
+### HTTPS Support
 
-remaining: JPEG bytes
+- Optional HTTPS using PFX certificate
+- Certificate password encrypted with Windows DPAPI (LocalMachine scope)
+- Falls back to HTTP if certificate load fails (with logging)
 
-So client does:
+---
 
-Read first 16 bytes → parse header.
+## Audio Control
 
-Remaining bytes → decode JPEG.
+### Architecture
 
-5. Rooms: Audio, Power, Discovery
-5.1. Power (Power/)
+Uses **NAudio** library which wraps Windows Core Audio APIs:
+- `MMDeviceEnumerator` - Enumerate audio devices
+- `IAudioSessionManager2` - Control per-app audio sessions
+- `IPolicyConfig` (COM) - Set default output device
 
-Interface:
+### Device Management
 
-public interface IPowerManager
+```csharp
+// Enumerate devices
+var deviceEnumerator = new MMDeviceEnumerator();
+var devices = deviceEnumerator.EnumerateAudioEndPoints(DataFlow.Render, DeviceState.Active);
+
+// Get device info
+foreach (var device in devices)
 {
-    void Restart();
-    void Shutdown();
+    var deviceInfo = new AudioDeviceInfo
+    {
+        Id = device.ID,
+        Name = device.FriendlyName,
+        Volume = device.AudioEndpointVolume.MasterVolumeLevelScalar,
+        Muted = device.AudioEndpointVolume.Mute,
+        IsDefault = device.ID == defaultDeviceId
+    };
 }
+```
 
+### Per-App Audio Control
 
-Implementation (PowerManager):
+```csharp
+// Get session manager
+var sessionManager = device.AudioSessionManager2;
 
-P/Invoke InitiateSystemShutdownEx with:
+// Enumerate sessions
+var sessions = sessionManager.Sessions;
 
-flags for reboot vs shutdown.
+// Control session volume
+var sessionControl = session.QueryInterface<ISimpleAudioVolume>();
+sessionControl.MasterVolume = volume;  // 0.0 to 1.0
+sessionControl.Mute = muted;
+```
 
-Requires SeShutdownPrivilege.
+### Default Device Selection
 
-5.2. Audio (Audio/)
+Uses COM interface `IPolicyConfig`:
+```csharp
+var policyConfig = (IPolicyConfig)new PolicyConfigClient();
+policyConfig.SetDefaultEndpoint(deviceId, Role.Multimedia);
+policyConfig.SetDefaultEndpoint(deviceId, Role.Console);
+```
 
-Interface:
+---
 
-public interface IAudioManager
+## Power Management
+
+### Implementation
+
+Uses Windows API `InitiateSystemShutdownEx`:
+```csharp
+[DllImport("advapi32.dll")]
+static extern bool InitiateSystemShutdownEx(
+    string lpMachineName,
+    string lpMessage,
+    uint dwTimeout,
+    bool bForceAppsClosed,
+    bool bRebootAfterShutdown,
+    uint dwReason
+);
+```
+
+### Privileges
+
+Requires `SeShutdownPrivilege`:
+- Service runs as LocalSystem, which has this privilege by default
+- For other accounts, privilege must be explicitly enabled
+
+### Operations
+
+- **Restart**: `InitiateSystemShutdownEx(..., bRebootAfterShutdown: true)`
+- **Shutdown**: `InitiateSystemShutdownEx(..., bRebootAfterShutdown: false)`
+
+---
+
+## System State Monitoring
+
+### Purpose
+
+Detects the current desktop state to:
+- Switch to correct desktop (Winlogon vs user desktop)
+- Report state in health endpoint
+- React to state changes (login, logout, lock, unlock)
+
+### Implementation
+
+`SystemStateMonitor` uses:
+- `WTSGetActiveConsoleSessionId()` - Get active session
+- `OpenInputDesktop()` - Detect if Winlogon desktop is active
+- `GetThreadDesktop()` - Detect current desktop
+
+### States
+
+```csharp
+public enum DesktopState
 {
-    AudioState GetState();
-    void SetDeviceVolume(string deviceId, float volume, bool muted);
-    void SetSessionVolume(string sessionId, float volume, bool muted);
-    void SetDefaultOutputDevice(string deviceId);
-    void SetSessionOutputDevice(string sessionId, string deviceId);
+    Unknown,      // Cannot determine
+    LoginScreen,  // Winlogon desktop (login screen)
+    Desktop,      // User desktop (logged in)
+    Locked        // Desktop is locked
 }
+```
 
+### State Detection Logic
 
-Models:
+1. Get active console session ID
+2. Try to open Winlogon desktop
+   - If successful → LoginScreen or Locked
+   - Check if user session exists → Desktop
+3. Monitor for changes and raise `StateChanged` event
 
-public sealed class AudioState
-{
-    public string DefaultOutputDeviceId { get; init; } = "";
-    public IReadOnlyList<AudioDeviceInfo> Devices { get; init; } = Array.Empty<AudioDeviceInfo>();
-    public IReadOnlyList<AudioSessionInfo> Sessions { get; init; } = Array.Empty<AudioSessionInfo>();
-}
+---
 
-public sealed class AudioDeviceInfo
-{
-    public string Id { get; init; } = "";
-    public string Name { get; init; } = "";
-    public float Volume { get; init; }
-    public bool Muted { get; init; }
-    public bool IsDefault { get; init; }
-}
+## Data Flow Examples
 
-public sealed class AudioSessionInfo
-{
-    public string Id { get; init; } = "";
-    public string Name { get; init; } = "";
-    public float Volume { get; init; }
-    public bool Muted { get; init; }
-    public string OutputDeviceId { get; init; } = ""; // Empty if routing is unknown (Windows API limitation)
-}
+### Screen Capture Flow
 
-
-Implementation:
-
-Use NAudio CoreAudio wrappers (MMDevice, IAudioSessionManager2).
-
-6. Plumbing: security, TLS, reliability
-6.1. TLS
-
-Kestrel listens on:
-
-HTTP (dev) / HTTPS (prod) at HttpPort.
-
-Certificate from AgentConfig.CertPath PFX; password decrypted with DPAPI.
-
-Falls back to HTTP if certificate load fails (with clear logging).
-
-6.2. REST API Authentication
-
-Optional API key authentication via AgentConfig.ApiKey:
-
-If configured: all REST endpoints except /api/v1/health require authentication.
-
-Headers: X-Openctrol-Key or Authorization: Bearer <key>.
-
-Uses constant-time comparison to prevent timing attacks.
-
-If not configured: authentication disabled (backward compatibility / development).
-
-6.3. Reliability
-
-The service itself:
-
-installed with SCM recovery: restart on failure.
-
-Config validation at startup: fails startup on invalid config (HttpPort, MaxSessions, etc.).
-
-RemoteDesktopEngine:
-
-internal try/catch around capture.
-
-if capture repeatedly fails (5+ times), enters degraded state (reported in health endpoint).
-
-Uses CancellationToken for proper cancellation.
-
-Reusable GDI resources via CaptureContext (no handle leaks).
-
-WebSocket:
-
-if client disconnects, unsubscribes from frames, ends session.
-
-Session expiry enforcement: periodic checks close expired connections.
-
-Proper cancellation token handling in all async operations.
-
-/api/v1/health exposes:
-
-last frame timestamp,
-
-engine running state,
-
-desktop state (login_screen/desktop/locked/unknown, with _degraded suffix if applicable),
-
-active sessions.
-
-7. Construction sequence for Cursor (high level)
-
-Treat these as phases; each can be one or more Cursor prompts.
-
-Phase 1 – Foundation
-
-Create solution & Openctrol.Agent project with folder structure.
-
-Implement AgentConfig, JsonConfigManager.
-
-Implement ILogger, EventLogLogger, FileLogger, CompositeLogger.
-
-Implement Program.cs + AgentHost to start/stop components (with stubs).
-
-Implement ControlApiServer with only /api/v1/health (stub data).
-
-Phase 2 – Remote desktop skeleton
-
-Implement SystemStateSnapshot, DesktopState, ISystemStateMonitor, SystemStateMonitor (stub returns desktop).
-
-Implement RemoteDesktopStatus, MonitorInfo, RemoteFrame, IFrameSubscriber, IRemoteDesktopEngine.
-
-Implement RemoteDesktopEngine with synthetic frames (just colored bitmaps) and logging for InjectPointer/InjectKey.
-
-Phase 3 – WebSocket wiring
-
-Implement ISecurityManager, SessionToken, SecurityManager (in-memory tokens).
-
-Implement ISessionBroker, DesktopSession, SessionBroker.
-
-Extend ControlApiServer:
-
+```
+1. Home Assistant requests session
 POST /api/v1/sessions/desktop
+   ↓
+2. Agent creates session, returns WebSocket URL
+   ↓
+3. Home Assistant connects WebSocket
+   ws://agent:44325/api/v1/rd/session?sess=...&token=...
+   ↓
+4. Agent validates token, sends hello message
+   ↓
+5. Agent subscribes WebSocket to RemoteDesktopEngine
+   ↓
+6. Capture thread runs:
+   - Switch desktop context (token impersonation)
+   - Capture frame (GDI BitBlt)
+   - Encode to JPEG
+   - Send binary message to WebSocket
+   ↓
+7. Home Assistant receives frame, displays in card
+```
 
-POST /api/v1/sessions/desktop/{id}/end
+### Input Injection Flow
 
-Implement DesktopWebSocketHandler:
+```
+1. User interacts with card (mouse move, click, keyboard)
+   ↓
+2. Card sends JSON message via WebSocket
+   { "type": "pointer_move", "dx": 10, "dy": 5 }
+   ↓
+3. Agent receives message in DesktopWebSocketHandler
+   ↓
+4. Converts to PointerEvent
+   ↓
+5. Calls RemoteDesktopEngine.InjectPointer()
+   ↓
+6. RemoteDesktopEngine calls InputDispatcher.DispatchPointer()
+   ↓
+7. InputDispatcher switches desktop context
+   ↓
+8. InputDispatcher calls SendInput() with mouse event
+   ↓
+9. Windows injects input into active desktop
+```
 
-validate sess + token,
+---
 
-send hello JSON,
+## Error Handling & Reliability
 
-subscribe to frames,
+### Capture Failures
 
-parse JSON input messages and log them.
+- Tracks consecutive capture failures
+- After 5 failures, enters "degraded" state
+- Degraded state reported in health endpoint
+- Continues attempting capture (may recover)
 
-Phase 4 – Real capture & input
+### WebSocket Disconnections
 
-Replace synthetic frames in RemoteDesktopEngine with GDI capture of primary monitor; encode JPEG.
+- Automatically unsubscribes from frames
+- Ends session on disconnect
+- Cleans up resources
 
-Implement PointerEvent, KeyboardEvent, InputDispatcher using SendInput.
+### Service Recovery
 
-Wire RemoteDesktopEngine.InjectPointer/InjectKey to InputDispatcher.
+- Windows Service recovery configured:
+  - Restart on failure
+  - Maximum restart attempts
+  - Failure action delay
 
-Phase 5 – System state & login screen
+### Resource Management
 
-Implement real SystemStateMonitor:
+- All GDI handles properly disposed
+- Token handles closed after use
+- Timers disposed on shutdown
+- WebSocket connections properly closed
 
-Active session detection,
+---
 
-login/desktop/locked.
+## Performance Considerations
 
-Make RemoteDesktopEngine attach to correct desktop based on SystemStateSnapshot.
+### Frame Rate
 
-Manual tests:
+- Configurable target FPS (default: 30)
+- Actual FPS may be lower if encoding is slow
+- Drops frames if behind schedule
 
-Desktop streaming + input.
+### JPEG Quality
 
-Locked screen.
+- Configurable quality (default: 75)
+- Higher quality = larger frames = more bandwidth
+- Lower quality = smaller frames = less bandwidth
 
-Fully logged-out login screen.
+### Multi-Monitor
 
-Phase 6 – Power, audio
+- Only captures selected monitor (not all monitors)
+- Reduces CPU and bandwidth usage
+- Client can switch monitors on demand
 
-Implement IPowerManager, PowerManager + /api/v1/power.
+### Threading
 
-Implement IAudioManager, AudioManager + /api/v1/audio/* endpoints.
+- Capture runs on dedicated thread
+- WebSocket handling on ASP.NET Core thread pool
+- Input injection on WebSocket thread (blocking, but fast)
 
-Note: Discovery (mDNS) is not included in v1.0.
+---
 
-Phase 7 – TLS, hardening, scripts
+## Future Enhancements
 
-Configure Kestrel for HTTPS using cert from config.
+Potential improvements:
+- Hardware-accelerated encoding (H.264 via GPU)
+- Multiple concurrent sessions
+- Audio streaming (not just control)
+- Discovery via mDNS
+- Remote file access
+- Clipboard synchronization
 
-Add basic rate limiting for token validation failures.
+---
 
-Add REST API authentication (API key support).
+## Conclusion
 
-Enhance /api/v1/health with full detailed status.
+Openctrol provides a robust, secure, and efficient solution for remote desktop control on Windows. The architecture is designed to:
+- Work reliably across all Windows desktop states
+- Handle errors gracefully
+- Provide secure access control
+- Minimize resource usage
+- Support multi-monitor setups
 
-Add install-service.ps1 and uninstall-service.ps1.
-
-Write docs/API.md describing REST and WS protocols.
-
-Implement config validation at startup.
-
-Implement proper resource disposal (timers, GDI handles).
-
-Add degraded state reporting for capture failures.
+The token impersonation mechanism is the key innovation that allows the service to escape Session 0 isolation and interact with the user's desktop, even at the login screen.

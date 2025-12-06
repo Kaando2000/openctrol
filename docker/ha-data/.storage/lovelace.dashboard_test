@@ -9,7 +9,7 @@
           "title": "Home",
           "badges": [
             {
-              "type": "custom:openctrol-card",
+              "type": "custom:openctrol",
               "entity": "sensor.openctrol_agent_status"
             }
           ]

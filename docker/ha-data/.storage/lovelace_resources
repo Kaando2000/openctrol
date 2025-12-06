@@ -5,8 +5,8 @@
   "data": {
     "items": [
       {
-        "id": "4bd52016b3ac439b914440d611e72a5f",
-        "url": "/local/openctrol/openctrol-card.js?v=0.7",
+        "id": "ab0f92678bea49b19854bf6796a247a6",
+        "url": "/local/openctrol/openctrol.js",
         "type": "module"
       }
     ]

@@ -4,27 +4,27 @@
   "key": "core.restore_state",
   "data": [
     {
-      "state": {"entity_id":"conversation.home_assistant","state":"unknown","attributes":{"friendly_name":"Home Assistant","supported_features":1},"last_changed":"2025-12-05T14:51:23.054457+00:00","last_reported":"2025-12-05T14:51:23.054457+00:00","last_updated":"2025-12-05T14:51:23.054457+00:00","context":{"id":"01KBQFY2HEEDG3RZJ86W365GPA","parent_id":null,"user_id":null}},
+      "state": {"entity_id":"conversation.home_assistant","state":"unknown","attributes":{"friendly_name":"Home Assistant","supported_features":1},"last_changed":"2025-12-06T23:37:08.793888+00:00","last_reported":"2025-12-06T23:37:08.793888+00:00","last_updated":"2025-12-06T23:37:08.793888+00:00","context":{"id":"01KBV0DFXS7XQJ64TBM9EM9K09","parent_id":null,"user_id":null}},
       "extra_data": null,
-      "last_seen": "2025-12-06T20:36:17.514399+00:00"
+      "last_seen": "2025-12-06T23:37:10.800247+00:00"
     },
     {
-      "state": {"entity_id":"event.backup_automatic_backup","state":"unknown","attributes":{"event_types":["completed","failed","in_progress"],"event_type":null,"friendly_name":"Backup Otomatik yedekleme"},"last_changed":"2025-12-05T14:51:23.092441+00:00","last_reported":"2025-12-05T14:51:23.092441+00:00","last_updated":"2025-12-05T14:51:23.092441+00:00","context":{"id":"01KBQFY2JM096Y3YMQMZSMTNVV","parent_id":null,"user_id":null}},
+      "state": {"entity_id":"event.backup_automatic_backup","state":"unknown","attributes":{"event_types":["completed","failed","in_progress"],"event_type":null,"friendly_name":"Backup Otomatik yedekleme"},"last_changed":"2025-12-06T23:37:08.836442+00:00","last_reported":"2025-12-06T23:37:08.836442+00:00","last_updated":"2025-12-06T23:37:08.836442+00:00","context":{"id":"01KBV0DFZ4EBDRCWHZ2K6V74PA","parent_id":null,"user_id":null}},
       "extra_data": {
         "last_event_type": null,
         "last_event_attributes": null
       },
-      "last_seen": "2025-12-06T20:36:17.514399+00:00"
+      "last_seen": "2025-12-06T23:37:10.800247+00:00"
     },
     {
-      "state": {"entity_id":"person.test","state":"unknown","attributes":{"editable":true,"id":"test","device_trackers":[],"user_id":"b80c0a7e97da4f0ea1cc41ab61aba4dc","friendly_name":"test"},"last_changed":"2025-12-05T14:51:23.327757+00:00","last_reported":"2025-12-05T14:51:23.986177+00:00","last_updated":"2025-12-05T14:51:23.986177+00:00","context":{"id":"01KBQFY3EJ123JXQDM65H56ZBS","parent_id":null,"user_id":null}},
+      "state": {"entity_id":"person.test","state":"unknown","attributes":{"editable":true,"id":"test","device_trackers":[],"source":"person.test","user_id":"b80c0a7e97da4f0ea1cc41ab61aba4dc","friendly_name":"test"},"last_changed":"2025-12-06T23:37:09.096910+00:00","last_reported":"2025-12-06T23:37:09.096910+00:00","last_updated":"2025-12-06T23:37:09.096910+00:00","context":{"id":"01KBV0DG788MKBNKY467REDPT7","parent_id":null,"user_id":null}},
       "extra_data": null,
-      "last_seen": "2025-12-06T20:36:17.514399+00:00"
+      "last_seen": "2025-12-06T23:37:10.800247+00:00"
     },
     {
-      "state": {"entity_id":"tts.google_translate_en_com","state":"unknown","attributes":{"friendly_name":"Google Translate en com"},"last_changed":"2025-12-05T14:51:23.812838+00:00","last_reported":"2025-12-05T14:51:23.812838+00:00","last_updated":"2025-12-05T14:51:23.812838+00:00","context":{"id":"01KBQFY394F1MSZJVYNBD0MXBF","parent_id":null,"user_id":null}},
+      "state": {"entity_id":"tts.google_translate_en_com","state":"unknown","attributes":{"friendly_name":"Google Translate en com"},"last_changed":"2025-12-06T23:37:09.668059+00:00","last_reported":"2025-12-06T23:37:09.668059+00:00","last_updated":"2025-12-06T23:37:09.668059+00:00","context":{"id":"01KBV0DGS4NSHGRR142GZTP3A0","parent_id":null,"user_id":null}},
       "extra_data": null,
-      "last_seen": "2025-12-06T20:36:17.514399+00:00"
+      "last_seen": "2025-12-06T23:37:10.800247+00:00"
     }
   ]
 }

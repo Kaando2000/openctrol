@@ -1,15 +1,11 @@
-﻿
+
 Microsoft Visual Studio Solution File, Format Version 12.00
 # Visual Studio Version 17
 VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{827E0CD3-B72D-47B6-A68D-7590B98EB39B}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Openctrol.Agent", "Agent\src\Openctrol.Agent.csproj", "{258BCF80-3F26-42FB-B988-C2AB589183EE}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Openctrol.Agent", "src\Openctrol.Agent\Openctrol.Agent.csproj", "{258BCF80-3F26-42FB-B988-C2AB589183EE}"
-EndProject
-Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0AB3BF05-4346-4AA6-1389-037BE0695223}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Openctrol.Agent.Tests", "tests\Openctrol.Agent.Tests\Openctrol.Agent.Tests.csproj", "{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Openctrol.Agent.Tests", "Agent\tests\Openctrol.Agent.Tests.csproj", "{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -50,7 +46,6 @@ Global
 		HideSolutionNode = FALSE
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
-		{258BCF80-3F26-42FB-B988-C2AB589183EE} = {827E0CD3-B72D-47B6-A68D-7590B98EB39B}
-		{DD06FBAC-C86E-41FA-B32A-6FD12709DA7A} = {0AB3BF05-4346-4AA6-1389-037BE0695223}
 	EndGlobalSection
 EndGlobal
+

@@ -4,9 +4,9 @@ services:
     container_name: openctrol-ha-test
     volumes:
       # Mount the Openctrol integration for live development
-      - ../homeassistant/custom_components/openctrol:/config/custom_components/openctrol:ro
+      - ../HomeAssistant/custom_components/openctrol:/config/custom_components/openctrol:ro
       # Mount the Openctrol card for live development
-      - ../www/openctrol:/config/www/openctrol:ro
+      - ../HomeAssistant/www/openctrol:/config/www/openctrol:ro
       # Persistent Home Assistant configuration
       - ./ha-data:/config
     ports:
