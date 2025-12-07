@@ -1,0 +1,11 @@
+# Example Lovelace configuration for Openctrol Card
+# Add this to your Lovelace dashboard YAML
+
+type: custom:openctrol-card
+entity: sensor.openctrol_pc_status
+title: "Living Room PC"
+show_power: true
+show_monitor: true
+show_keyboard: true
+show_sound: true
+

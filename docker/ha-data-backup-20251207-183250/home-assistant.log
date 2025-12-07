@@ -1,0 +1,5 @@
+2025-12-07 15:27:01.661 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
+2025-12-07 15:27:09.675 ERROR (SyncWorker_6) [annotatedyaml.loader] mapping values are not allowed here
+  in "/config/custom_components/openctrol/services.yaml", line 199, column 52
+2025-12-07 15:27:09.676 WARNING (SyncWorker_6) [homeassistant.helpers.service] Unable to parse services.yaml for the openctrol integration: mapping values are not allowed here
+  in "/config/custom_components/openctrol/services.yaml", line 199, column 52

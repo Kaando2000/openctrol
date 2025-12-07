@@ -1,14 +1,38 @@
-2025-12-06 23:37:06.779 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
-2025-12-06 23:37:07.527 WARNING (Recorder) [homeassistant.components.recorder.util] The system could not validate that the sqlite3 database at //config/home-assistant_v2.db was shutdown cleanly
-2025-12-06 23:37:07.596 WARNING (Recorder) [homeassistant.components.recorder.util] Ended unfinished session (id=40 from 2025-12-06 23:34:07.848629)
-2025-12-06 23:37:15.171 ERROR (SyncWorker_6) [annotatedyaml.loader] mapping values are not allowed here
+2025-12-07 16:08:20.152 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
+2025-12-07 16:08:20.943 WARNING (Recorder) [homeassistant.components.recorder.util] The system could not validate that the sqlite3 database at //config/home-assistant_v2.db was shutdown cleanly
+2025-12-07 16:08:20.992 WARNING (Recorder) [homeassistant.components.recorder.util] Ended unfinished session (id=2 from 2025-12-07 16:06:46.704150)
+2025-12-07 16:08:29.123 ERROR (SyncWorker_3) [annotatedyaml.loader] mapping values are not allowed here
   in "/config/custom_components/openctrol/services.yaml", line 199, column 52
-2025-12-06 23:37:15.172 WARNING (SyncWorker_6) [homeassistant.helpers.service] Unable to parse services.yaml for the openctrol integration: mapping values are not allowed here
+2025-12-07 16:08:29.123 WARNING (SyncWorker_3) [homeassistant.helpers.service] Unable to parse services.yaml for the openctrol integration: mapping values are not allowed here
   in "/config/custom_components/openctrol/services.yaml", line 199, column 52
-2025-12-06 23:38:41.510 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-TypeError: Cannot read properties of undefined (reading '_leaflet_pos')
-_leaflet_pos (node_modules/leaflet/src/dom/DomUtil.js:247:11)
-getPosition (node_modules/leaflet/src/map/Map.js:1488:9)
-_getMapPanePos (node_modules/leaflet/src/map/Map.js:1505:66)
-_getNewPixelOrigin (node_modules/leaflet/src/map/Map.js:1224:27)
-_move (node_modules/leaflet/src/map/Map.js:1726:7)
+2025-12-07 16:16:18.376 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+SyntaxError: Unexpected identifier 'Set'
+ Unexpected identifier 'Set'::
+2025-12-07 16:16:20.285 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
+script": (src/common/dom/load_resource.ts:32:21)
+_load (src/common/dom/load_resource.ts:6:2)
+loadModule (src/common/dom/load_resource.ts:37:43)
+loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
+loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
+_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
+2025-12-07 16:17:52.380 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
+script": (src/common/dom/load_resource.ts:32:21)
+_load (src/common/dom/load_resource.ts:6:2)
+loadModule (src/common/dom/load_resource.ts:37:43)
+loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
+loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
+_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
+2025-12-07 16:18:06.272 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+SyntaxError: Unexpected identifier 'Set'
+ Unexpected identifier 'Set'::
+2025-12-07 16:18:16.901 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
+SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
+script": (src/common/dom/load_resource.ts:32:21)
+_load (src/common/dom/load_resource.ts:6:2)
+loadModule (src/common/dom/load_resource.ts:37:43)
+loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
+loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
+_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
+2025-12-07 16:32:28.028 ERROR (MainThread) [custom_components.openctrol.sensor] Error requesting openctrol data: Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "minor_version": 5,
+  "key": "core.config_entries",
+  "data": {
+    "entries": [
+      {"created_at":"2025-12-02T18:45:00.186045+00:00","data":{},"disabled_by":null,"discovery_keys":{},"domain":"sun","entry_id":"01KBG63P4TKMQM6402WJ5Y83NG","minor_version":1,"modified_at":"2025-12-02T18:45:00.186047+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"import","subentries":[],"title":"Sun","unique_id":null,"version":1},
+      {"created_at":"2025-12-02T18:45:00.560069+00:00","data":{},"disabled_by":null,"discovery_keys":{},"domain":"go2rtc","entry_id":"01KBG63PGGZ7K28P1MBPDS0743","minor_version":1,"modified_at":"2025-12-02T18:45:00.560071+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"system","subentries":[],"title":"go2rtc","unique_id":null,"version":1},
+      {"created_at":"2025-12-02T18:45:00.568423+00:00","data":{},"disabled_by":null,"discovery_keys":{},"domain":"backup","entry_id":"01KBG63PGR4CJVXYE9EXGBRPAJ","minor_version":1,"modified_at":"2025-12-02T18:45:00.568425+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"system","subentries":[],"title":"Backup","unique_id":null,"version":1},
+      {"created_at":"2025-12-02T18:48:25.313917+00:00","data":{},"disabled_by":null,"discovery_keys":{},"domain":"shopping_list","entry_id":"01KBG69YF11E4J3C310EKE94ZH","minor_version":1,"modified_at":"2025-12-02T18:48:25.313920+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"onboarding","subentries":[],"title":"Shopping list","unique_id":"shopping_list","version":1},
+      {"created_at":"2025-12-02T18:48:25.415779+00:00","data":{},"disabled_by":null,"discovery_keys":{},"domain":"radio_browser","entry_id":"01KBG69YJ76J8YDMNNWA1A43WH","minor_version":1,"modified_at":"2025-12-02T18:48:25.415781+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"onboarding","subentries":[],"title":"Radio Browser","unique_id":null,"version":1},
+      {"created_at":"2025-12-02T18:48:25.424741+00:00","data":{"language":"en","tld":"com"},"disabled_by":null,"discovery_keys":{},"domain":"google_translate","entry_id":"01KBG69YJGWXB1V7747ANRFASK","minor_version":1,"modified_at":"2025-12-02T18:48:25.424742+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"onboarding","subentries":[],"title":"Google Translate text-to-speech","unique_id":null,"version":1},
+      {"created_at":"2025-12-07T14:43:28.545731+00:00","data":{"api_key":"test","host":"192.168.1.52","port":44325,"use_ssl":false},"disabled_by":null,"discovery_keys":{},"domain":"openctrol","entry_id":"01KBWM91511XDDQG85GNT5XMYN","minor_version":1,"modified_at":"2025-12-07T14:43:28.545733+00:00","options":{},"pref_disable_new_entities":false,"pref_disable_polling":false,"source":"user","subentries":[],"title":"Openctrol Agent","unique_id":"192.168.1.52:44325","version":1}
+    ]
+  }
+}

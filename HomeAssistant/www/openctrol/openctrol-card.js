@@ -10,41 +10,29 @@
 
 // Import LitElement, html, and css from lit
 // Home Assistant provides lit globally via window.lit
-// Check for window.lit and define class at top level (avoids indentation issues)
-if (typeof window === 'undefined' || !window.lit || !window.lit.LitElement) {
-  // Wait for window.lit with polling
-  let attempts = 0;
-  const maxAttempts = 50;
-  const checkInterval = 100;
+// CSP-compliant loading: use function references, not string evaluation
+(function() {
+  'use strict';
   
-  const checkLit = setInterval(() => {
-    attempts++;
-    if (window.lit && window.lit.LitElement) {
-      clearInterval(checkLit);
-      defineCardClass();
-    } else if (attempts >= maxAttempts) {
-      clearInterval(checkLit);
-      const errorMsg = 'Openctrol Card requires Home Assistant. window.lit is not available.\n\n' +
-        'To fix:\n' +
-        '1. Go to Settings → Dashboards → Resources\n' +
-        '2. Ensure the card is added with type "JavaScript Module"\n' +
-        '3. Refresh the page (Ctrl+Shift+R)';
-      console.error(errorMsg);
-    }
-  }, checkInterval);
-  
-  function defineCardClass() {
-    const { LitElement, html, css } = window.lit;
-    defineCard(LitElement, html, css);
+  // Helper function to check if window.lit is available
+  function checkLitAvailable() {
+    return typeof window !== 'undefined' && 
+           window.lit && 
+           window.lit.LitElement && 
+           window.lit.html && 
+           window.lit.css;
   }
-} else {
-  // window.lit is available immediately
-  const { LitElement, html, css } = window.lit;
-  defineCard(LitElement, html, css);
-}
-
-function defineCard(LitElement, html, css) {
-  class OpenctrolCard extends LitElement {
+  
+  // Define and register the card
+  function defineAndRegisterCard() {
+    if (!checkLitAvailable()) {
+      return false;
+    }
+    
+    const { LitElement, html, css } = window.lit;
+    
+    // Define the card class
+    class OpenctrolCard extends LitElement {
     static get properties() {
       return {
           hass: { type: Object },
@@ -1655,6 +1643,7 @@ function defineCard(LitElement, html, css) {
               class="icon-button"
               @click=${() => this._toggleMobileKeyboard()}
               title=${this._mobileKeyboardVisible ? "Hide Keyboard" : "Show Keyboard"}
+              aria-label=${this._mobileKeyboardVisible ? "Hide Keyboard" : "Show Keyboard"}
             >
               ⌨
             </button>
@@ -1671,6 +1660,8 @@ function defineCard(LitElement, html, css) {
               class="icon-button ${this._activePanel === "power" ? "active" : ""}"
               @click=${() => this._activePanel = this._activePanel === "power" ? null : "power"}
               ?disabled=${!this._isOnline}
+              aria-label="Power Control"
+              title="Power Control"
             >
               ⚡
             </button>
@@ -1680,6 +1671,8 @@ function defineCard(LitElement, html, css) {
               class="icon-button ${this._activePanel === "monitor" ? "active" : ""}"
               @click=${() => this._activePanel = this._activePanel === "monitor" ? null : "monitor"}
               ?disabled=${!this._isOnline}
+              aria-label="Monitor Control"
+              title="Monitor Control"
             >
               🖥
             </button>
@@ -1689,6 +1682,8 @@ function defineCard(LitElement, html, css) {
               class="icon-button ${this._activePanel === "keyboard" ? "active" : ""}"
               @click=${() => this._activePanel = this._activePanel === "keyboard" ? null : "keyboard"}
               ?disabled=${!this._isOnline}
+              aria-label="Keyboard"
+              title="Keyboard"
             >
               ⌨
             </button>
@@ -1698,6 +1693,8 @@ function defineCard(LitElement, html, css) {
               class="icon-button ${this._activePanel === "sound" ? "active" : ""}"
               @click=${() => this._activePanel = this._activePanel === "sound" ? null : "sound"}
               ?disabled=${!this._isOnline}
+              aria-label="Sound Mixer"
+              title="Sound Mixer"
             >
               🔊
             </button>
@@ -1806,11 +1803,11 @@ function defineCard(LitElement, html, css) {
               <div class="video-status">Connecting to video stream...</div>
             ` : this._videoError ? html`
               <div class="video-status" style="color: #f44336;">Error: ${this._videoError}</div>
-              <button class="video-button" @click=${() => this._connectVideo()}>Retry</button>
+              <button class="video-button" @click=${() => this._connectVideo()} aria-label="Retry Video Connection" title="Retry Video Connection">Retry</button>
             ` : html`
               <div class="video-status">Video stream not connected</div>
               ${this._isOnline ? html`
-                <button class="video-button" @click=${() => this._connectVideo()}>Connect</button>
+                <button class="video-button" @click=${() => this._connectVideo()} aria-label="Connect Video Stream" title="Connect Video Stream">Connect</button>
               ` : html`
                 <div class="video-status">Agent is offline</div>
               `}
@@ -1818,7 +1815,7 @@ function defineCard(LitElement, html, css) {
           </div>
         ` : html`
           <div class="video-controls" style="position: absolute; top: 8px; right: 8px;">
-            <button class="video-button" @click=${() => this._disconnectVideo()}>Disconnect</button>
+            <button class="video-button" @click=${() => this._disconnectVideo()} aria-label="Disconnect Video Stream" title="Disconnect Video Stream">Disconnect</button>
           </div>
         `}
       </div>
@@ -2038,6 +2035,8 @@ function defineCard(LitElement, html, css) {
       <div class="button-row">
         <button
           class="click-button ${this._leftClickHeld ? "active" : ""}"
+          aria-label="Left Click"
+          title="Left Click"
           @mousedown=${(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2169,6 +2168,8 @@ function defineCard(LitElement, html, css) {
         </button>
         <button
           class="click-button ${this._rightClickHeld ? "active" : ""}"
+          aria-label="Right Click"
+          title="Right Click"
           @mousedown=${(e) => {
             e.preventDefault();
             e.stopPropagation();
@@ -2330,8 +2331,8 @@ function defineCard(LitElement, html, css) {
     const controls = document.createElement("div");
     controls.className = "fullscreen-controls";
     controls.innerHTML = `
-      <button class="fullscreen-button" id="openctrol-fullscreen-keyboard">⌨ Keyboard</button>
-      <button class="fullscreen-button" id="openctrol-fullscreen-close">✕ Close</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-keyboard" aria-label="Show Keyboard" title="Show Keyboard">⌨ Keyboard</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-close" aria-label="Close Fullscreen" title="Close Fullscreen">✕ Close</button>
     `;
     overlay.appendChild(controls);
 
@@ -2339,9 +2340,9 @@ function defineCard(LitElement, html, css) {
     const bottomControls = document.createElement("div");
     bottomControls.className = "fullscreen-bottom-controls";
     bottomControls.innerHTML = `
-      <button class="fullscreen-button" id="openctrol-fullscreen-left">Left Click</button>
-      <button class="fullscreen-button" id="openctrol-fullscreen-right">Right Click</button>
-      <button class="fullscreen-button" id="openctrol-fullscreen-middle">Middle Click</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-left" aria-label="Left Click" title="Left Click">Left Click</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-right" aria-label="Right Click" title="Right Click">Right Click</button>
+      <button class="fullscreen-button" id="openctrol-fullscreen-middle" aria-label="Middle Click" title="Middle Click">Middle Click</button>
     `;
     overlay.appendChild(bottomControls);
 
@@ -2532,7 +2533,14 @@ function defineCard(LitElement, html, css) {
           })();
         } else {
           const button = e.button === 2 ? "right" : e.button === 1 ? "middle" : "left";
-          this._sendPointerEvent("click", null, null, button);
+          // Ensure click is awaited to prevent race conditions
+          (async () => {
+            try {
+              await this._sendPointerEvent("click", null, null, button);
+            } catch (err) {
+              console.error("Error sending click:", err);
+            }
+          })();
         }
       }
       touchStart = null;
@@ -2809,18 +2817,22 @@ function defineCard(LitElement, html, css) {
       <div class="panel">
         <div class="panel-header">
           <h3 class="panel-title">Power Control</h3>
-          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }}>×</button>
+          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }} aria-label="Close Panel" title="Close Panel">×</button>
         </div>
         <div class="panel-section">
           <button
             class="power-button restart"
             @click=${() => this._handlePowerAction("restart")}
+            aria-label="Restart Computer"
+            title="Restart Computer"
           >
             Restart
           </button>
           <button
             class="power-button shutdown"
             @click=${() => this._handlePowerAction("shutdown")}
+            aria-label="Shutdown Computer"
+            title="Shutdown Computer"
           >
             Shutdown
           </button>
@@ -2829,7 +2841,9 @@ function defineCard(LitElement, html, css) {
             @click=${() => {
               alert("Wake-on-LAN is not yet supported by the Openctrol Agent backend. This feature will be available in a future update.");
             }}
+            aria-label="Wake-on-LAN (Not Available)"
             title="Wake-on-LAN is not yet supported"
+            disabled
           >
             Wake on LAN (Not Available)
           </button>
@@ -2859,7 +2873,7 @@ function defineCard(LitElement, html, css) {
       <div class="panel">
         <div class="panel-header">
           <h3 class="panel-title">Monitor Control</h3>
-          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }}>×</button>
+          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }} aria-label="Close Panel" title="Close Panel">×</button>
         </div>
         <div class="panel-section">
           <div class="section-title">Monitor Selection (${normalizedMonitors.length} available)</div>
@@ -2939,7 +2953,7 @@ function defineCard(LitElement, html, css) {
       <div class="panel">
         <div class="panel-header">
           <h3 class="panel-title">Keyboard</h3>
-          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }}>×</button>
+          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }} aria-label="Close Panel" title="Close Panel">×</button>
         </div>
         <div class="panel-section">
           <div class="section-title">Modifiers & Special Keys</div>
@@ -3289,7 +3303,7 @@ function defineCard(LitElement, html, css) {
       <div class="panel">
         <div class="panel-header">
           <h3 class="panel-title">Sound Mixer</h3>
-          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }}>×</button>
+          <button class="close-button" @click=${() => { this._activePanel = null; this.requestUpdate(); }} aria-label="Close Panel" title="Close Panel">×</button>
         </div>
         <div class="panel-section">
           <div class="section-title">Master Volume</div>
@@ -3345,6 +3359,8 @@ function defineCard(LitElement, html, css) {
                         this._handleDeviceVolumeChange(device.id, device.volume, !device.muted);
                       }}
                       ?disabled=${!this._isOnline}
+                      aria-label=${device.muted ? "Unmute " + (device.name || device.id) : "Mute " + (device.name || device.id)}
+                      title=${device.muted ? "Unmute " + (device.name || device.id) : "Mute " + (device.name || device.id)}
                     >
                       ${device.muted ? "🔇" : "🔊"}
                     </button>
@@ -3355,6 +3371,8 @@ function defineCard(LitElement, html, css) {
                           this._handleSetDefaultDevice(device.id);
                         }}
                         ?disabled=${!this._isOnline}
+                        aria-label=${"Set " + (device.name || device.id) + " as Default Output Device"}
+                        title=${"Set " + (device.name || device.id) + " as Default Output Device"}
                       >
                         Set Default
                       </button>
@@ -3398,12 +3416,16 @@ function defineCard(LitElement, html, css) {
                 this._powerConfirm = null;
                 this.requestUpdate();
               }}
+              aria-label="Cancel"
+              title="Cancel"
             >
               Cancel
             </button>
             <button
               class="confirm-button confirm"
               @click=${() => this._callPowerAction(this._powerConfirm)}
+              aria-label="Confirm"
+              title="Confirm"
             >
               ${actionLabel.charAt(0).toUpperCase() + actionLabel.slice(1)}
             </button>
@@ -3493,5 +3515,36 @@ function defineCard(LitElement, html, css) {
   } catch (error) {
     console.error("Failed to register Openctrol Card with Home Assistant:", error);
   }
-}
-
+    
+    return true;
+  }
+  
+  // Wait for window.lit to be available (CSP-compliant)
+  function waitForLit() {
+    if (defineAndRegisterCard()) {
+      // Successfully defined and registered
+      return;
+    }
+    
+    // window.lit not ready yet, retry using function reference (CSP-compliant)
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame(waitForLit);
+    } else if (typeof setImmediate !== 'undefined') {
+      setImmediate(waitForLit);
+    } else {
+      // Fallback: use function reference, not string
+      setTimeout(waitForLit, 50);
+    }
+  }
+  
+  // Start loading when appropriate
+  // Try immediate load first (most common case)
+  if (checkLitAvailable()) {
+    defineAndRegisterCard();
+  } else if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', waitForLit);
+  } else {
+    // DOM already loaded, start waiting
+    waitForLit();
+  }
+})();

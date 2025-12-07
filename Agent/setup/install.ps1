@@ -193,8 +193,22 @@ try {
         Write-Host "  Already exists: $ConfigPath" -ForegroundColor Gray
     }
     
+    # Create logs subdirectory
+    $logsPath = Join-Path $ConfigPath "logs"
+    if (-not (Test-Path $logsPath)) {
+        New-Item -ItemType Directory -Path $logsPath -Force | Out-Null
+        Write-Host "  Created logs directory: $logsPath" -ForegroundColor Green
+    } else {
+        Write-Host "  Logs directory already exists: $logsPath" -ForegroundColor Gray
+    }
+    
     # Set ACL: Administrators and SYSTEM only
-    $acl = Get-Acl $ConfigPath
+    # Use icacls for more reliable permission setting
+    Write-Host "  Setting permissions on config directory..." -ForegroundColor Yellow
+    $result = icacls $ConfigPath /grant "SYSTEM:(OI)(CI)F" /grant "Administrators:(OI)(CI)F" /inheritance:r 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "  Failed to set config directory permissions with icacls, trying PowerShell ACL..."
+        $acl = Get-Acl $ConfigPath
     $acl.SetAccessRuleProtection($true, $false) # Disable inheritance, remove inherited rules
     
     # Remove all existing access rules
@@ -220,10 +234,58 @@ try {
     )
     $acl.AddAccessRule($systemRule)
     
-    Set-Acl -Path $ConfigPath -AclObject $acl
-    Write-Host "  Set restrictive ACLs (Administrators + SYSTEM only)" -ForegroundColor Green
+        Set-Acl -Path $ConfigPath -AclObject $acl
+        Write-Host "  Set restrictive ACLs on config directory using PowerShell (Administrators + SYSTEM only)" -ForegroundColor Green
+    } else {
+        Write-Host "  Set restrictive ACLs on config directory (Administrators + SYSTEM only)" -ForegroundColor Green
+    }
+    
+    # Set same ACL on logs directory using icacls
+    Write-Host "  Setting permissions on logs directory..." -ForegroundColor Yellow
+    $result = icacls $logsPath /grant "SYSTEM:(OI)(CI)F" /grant "Administrators:(OI)(CI)F" /inheritance:r 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "  Failed to set logs directory permissions with icacls, trying PowerShell ACL..."
+        $logsAcl = Get-Acl $logsPath
+        $logsAcl.SetAccessRuleProtection($true, $false)
+        $logsAcl.Access | ForEach-Object { $logsAcl.RemoveAccessRule($_) | Out-Null }
+        
+        $adminLogsRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.SecurityIdentifier]::new([System.Security.Principal.WellKnownSidType]::BuiltinAdministratorsSid, $null),
+            "FullControl",
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Allow"
+        )
+        $logsAcl.AddAccessRule($adminLogsRule)
+        
+        $systemLogsRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+            [System.Security.Principal.SecurityIdentifier]::new([System.Security.Principal.WellKnownSidType]::LocalSystemSid, $null),
+            "FullControl",
+            "ContainerInherit,ObjectInherit",
+            "None",
+            "Allow"
+        )
+        $logsAcl.AddAccessRule($systemLogsRule)
+        
+        Set-Acl -Path $logsPath -AclObject $logsAcl
+        Write-Host "  Set restrictive ACLs on logs directory using PowerShell (Administrators + SYSTEM only)" -ForegroundColor Green
+    } else {
+        Write-Host "  Set restrictive ACLs on logs directory (Administrators + SYSTEM only)" -ForegroundColor Green
+    }
+    
+    # Verify permissions by attempting to write a test file
+    Write-Host "  Verifying logs directory permissions..." -ForegroundColor Yellow
+    try {
+        $testFile = Join-Path $logsPath "install-verify.tmp"
+        "test" | Out-File -FilePath $testFile -ErrorAction Stop
+        Remove-Item $testFile -Force -ErrorAction SilentlyContinue
+        Write-Host "  Logs directory permissions verified (writable)" -ForegroundColor Green
+    } catch {
+        Write-Warning "  Logs directory permissions verification failed: $_"
+        Write-Warning "  Service may not be able to write logs. Check permissions manually after installation."
+    }
 } catch {
-    Write-Warning "Failed to set ACLs on config directory (continuing): $_"
+    Write-Warning "Failed to set ACLs on config/logs directory (continuing): $_"
 }
 
 # Step 4: Create or reuse config.json

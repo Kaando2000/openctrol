@@ -14,8 +14,8 @@
         "name": "Oturma odası",
         "picture": null,
         "temperature_entity_id": null,
-        "created_at": "2025-12-02T18:48:06.991942+00:00",
-        "modified_at": "2025-12-02T18:48:06.991943+00:00"
+        "created_at": "2025-12-07T15:34:03.177917+00:00",
+        "modified_at": "2025-12-07T15:34:03.177919+00:00"
       },
       {
         "aliases": [],
@@ -27,8 +27,8 @@
         "name": "Mutfak",
         "picture": null,
         "temperature_entity_id": null,
-        "created_at": "2025-12-02T18:48:06.991994+00:00",
-        "modified_at": "2025-12-02T18:48:06.991995+00:00"
+        "created_at": "2025-12-07T15:34:03.177972+00:00",
+        "modified_at": "2025-12-07T15:34:03.177973+00:00"
       },
       {
         "aliases": [],
@@ -40,8 +40,8 @@
         "name": "Yatak odası",
         "picture": null,
         "temperature_entity_id": null,
-        "created_at": "2025-12-02T18:48:06.992017+00:00",
-        "modified_at": "2025-12-02T18:48:06.992017+00:00"
+        "created_at": "2025-12-07T15:34:03.177995+00:00",
+        "modified_at": "2025-12-07T15:34:03.177996+00:00"
       }
     ]
   }
