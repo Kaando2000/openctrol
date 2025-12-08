@@ -138,17 +138,9 @@ public sealed class DesktopContextSwitcher : IDisposable
         try
         {
             // Revert impersonation by removing thread token
-            if (_isImpersonating)
+            if (!SetThreadToken(IntPtr.Zero, IntPtr.Zero))
             {
-                if (!SetThreadToken(IntPtr.Zero, IntPtr.Zero))
-                {
-                    // Fallback to RevertToSelf if SetThreadToken fails
-                    RevertToSelf();
-                }
-            }
-            else
-            {
-                // Fallback to RevertToSelf if we're not sure of state
+                // Fallback to RevertToSelf if SetThreadToken fails
                 RevertToSelf();
             }
 

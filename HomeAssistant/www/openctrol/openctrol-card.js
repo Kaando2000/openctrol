@@ -1149,8 +1149,15 @@
   }
 
   _handleTouchMove(e) {
-    if (!this._isOnline || !this._touchStart) return;
+    // NOTE: Touch input latency consideration
+    // Touch move events are routed via: Browser -> Home Assistant (HTTP) -> Python Integration -> Agent
+    // This introduces ~100ms+ latency compared to a direct WebSocket connection.
+    // This is a known architectural trade-off: simplicity and consistency (all input via HA services)
+    // vs. lower latency (direct WebSocket like fullscreen video mode).
+    // Future optimization: Consider using direct WebSocket connection for input in non-fullscreen mode.
     
+    if (!this._isOnline || !this._touchStart) return;
+
     e.preventDefault();
     e.stopPropagation(); // Prevent browser navigation gestures
     const touch = e.touches[0] || e.changedTouches[0];
@@ -1158,12 +1165,12 @@
     const dx = touch.clientX - this._lastMove.x;
     const dy = touch.clientY - this._lastMove.y;
     const distance = Math.sqrt(dx * dx + dy * dy);
-    
+
     // Accumulate total movement distance
     if (this._touchStart) {
       this._touchStart.totalDistance += distance;
     }
-    
+
     // Movement threshold: if moved more than 5 pixels, consider it a pan
     if (this._touchStart.totalDistance > 5 || Math.abs(dx) > 2 || Math.abs(dy) > 2) {
       this._touchStart.moved = true;
@@ -1834,19 +1841,54 @@
     try {
       const haId = this.hass.config?.location_name || this.config.entity || "home-assistant";
       
-      // Create desktop session
+      // Create desktop session for video
+      console.log("Creating desktop session for video...");
       await this.hass.callService("openctrol", "create_desktop_session", {
         entity_id: this.config.entity,
         ha_id: haId,
         ttl_seconds: 900,
       });
 
-      // Note: Video streaming requires WebSocket API support or entity state storage
-      // for session info. This is a placeholder implementation.
-      this._videoError = "Video streaming requires WebSocket API support. " +
-        "Session management is implemented but connection method needs configuration.";
-      this._videoConnecting = false;
-      this.requestUpdate();
+      // Wait for entity to update and refresh multiple times to ensure we get session info
+      for (let i = 0; i < 3; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        try {
+          await this.hass.callService("homeassistant", "update_entity", {
+            entity_id: this.config.entity,
+          });
+        } catch (refreshErr) {
+          console.warn("Entity refresh attempt", i + 1, "failed:", refreshErr);
+        }
+      }
+
+      // Get WebSocket URL from entity attributes
+      const entity = this.hass.states[this.config.entity];
+      console.log("Entity state:", entity);
+      console.log("Entity attributes:", entity?.attributes);
+
+      const websocketUrl = entity?.attributes?.latest_websocket_url;
+      const sessionId = entity?.attributes?.latest_session_id;
+
+      console.log("WebSocket URL:", websocketUrl);
+      console.log("Session ID:", sessionId);
+
+      if (!websocketUrl) {
+        // Try one more refresh before giving up
+        await this.hass.callService("homeassistant", "update_entity", {
+          entity_id: this.config.entity,
+        });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const retryEntity = this.hass.states[this.config.entity];
+        const retryUrl = retryEntity?.attributes?.latest_websocket_url;
+        if (retryUrl) {
+          await this._connectVideoWebSocket(retryUrl);
+          return;
+        }
+        throw new Error("WebSocket URL not available. Please ensure a monitor is selected and try again.");
+      }
+
+      // Connect to WebSocket with the retrieved URL
+      await this._connectVideoWebSocket(websocketUrl);
     } catch (err) {
       console.error("Failed to connect video:", err);
       this._videoError = err.message || "Connection failed";

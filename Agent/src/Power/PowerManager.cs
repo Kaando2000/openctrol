@@ -16,25 +16,35 @@ public sealed class PowerManager : IPowerManager
     public void Restart()
     {
         _logger.Info("Restarting system...");
-        InitiateSystemShutdownEx(
+        if (!InitiateSystemShutdownEx(
             null,
             "Openctrol Agent requested restart",
             0,
             true,
             true,
-            SHUTDOWN_RESTART);
+            SHUTDOWN_RESTART))
+        {
+            int error = Marshal.GetLastWin32Error();
+            _logger.Error($"Failed to initiate system restart. Error code: {error}");
+            throw new InvalidOperationException($"System restart failed with error code: {error}");
+        }
     }
 
     public void Shutdown()
     {
         _logger.Info("Shutting down system...");
-        InitiateSystemShutdownEx(
+        if (!InitiateSystemShutdownEx(
             null,
             "Openctrol Agent requested shutdown",
             0,
             true,
             true,
-            SHUTDOWN_POWEROFF);
+            SHUTDOWN_POWEROFF))
+        {
+            int error = Marshal.GetLastWin32Error();
+            _logger.Error($"Failed to initiate system shutdown. Error code: {error}");
+            throw new InvalidOperationException($"System shutdown failed with error code: {error}");
+        }
     }
 
     private void AcquireShutdownPrivilege()

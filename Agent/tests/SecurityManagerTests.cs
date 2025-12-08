@@ -91,9 +91,11 @@ public class SecurityManagerTests
     }
 
     [Fact]
-    public void IsHaAllowed_NoAllowlist_ReturnsFalse()
+    public void IsHaAllowed_NoAllowlist_ReturnsTrue()
     {
-        // Arrange - Empty allowlist means deny-all (secure by default)
+        // Arrange - HA ID allowlist feature is disabled by design.
+        // Authentication is enforced via API key + LAN/localhost checks only.
+        // IsHaAllowed() always returns true regardless of allowlist configuration.
         var configManager = new JsonConfigManager();
         var config = configManager.GetConfig();
         config.AllowedHaIds = new List<string>(); // Explicitly empty
@@ -104,19 +106,20 @@ public class SecurityManagerTests
         var isAllowed = securityManager.IsHaAllowed("any-ha-id");
 
         // Assert
-        Assert.False(isAllowed); // Empty allowlist = deny-all
+        Assert.True(isAllowed); // Always returns true - allowlist feature is disabled
     }
 
     [Fact]
-    public void IsHaAllowed_NullAllowedHaIds_ReturnsFalse()
+    public void IsHaAllowed_NullAllowedHaIds_ReturnsTrue()
     {
-        // Arrange - Simulate JSON deserialization that sets AllowedHaIds to null
+        // Arrange - HA ID allowlist feature is disabled by design.
+        // Simulate JSON deserialization that sets AllowedHaIds to null
         var jsonWithoutAllowedHaIds = """{"AgentId":"test-id","HttpPort":44325,"MaxSessions":1,"TargetFps":30}""";
         var config = JsonSerializer.Deserialize<AgentConfig>(jsonWithoutAllowedHaIds);
         Assert.NotNull(config);
         
         // System.Text.Json may set AllowedHaIds to null if not in JSON
-        // This test verifies the null check in IsHaAllowed handles this case (deny-all)
+        // This test verifies that IsHaAllowed always returns true (feature disabled)
         if (config!.AllowedHaIds == null)
         {
             // Create a mock config manager that returns config with null AllowedHaIds
@@ -128,14 +131,15 @@ public class SecurityManagerTests
             var isAllowed = securityManager.IsHaAllowed("any-ha-id");
 
             // Assert
-            Assert.False(isAllowed); // Null/empty allowlist = deny-all (secure by default)
+            Assert.True(isAllowed); // Always returns true - allowlist feature is disabled
         }
     }
 
     [Fact]
-    public void IsHaAllowed_WithAllowlist_ReturnsTrueForAllowed()
+    public void IsHaAllowed_WithAllowlist_ReturnsTrue()
     {
-        // Arrange
+        // Arrange - HA ID allowlist feature is disabled by design.
+        // IsHaAllowed() always returns true regardless of allowlist configuration.
         var configManager = new JsonConfigManager();
         var config = configManager.GetConfig();
         config.AllowedHaIds = new List<string> { "allowed-id-1", "allowed-id-2" };
@@ -146,13 +150,14 @@ public class SecurityManagerTests
         var isAllowed = securityManager.IsHaAllowed("allowed-id-1");
 
         // Assert
-        Assert.True(isAllowed);
+        Assert.True(isAllowed); // Always returns true - allowlist feature is disabled
     }
 
     [Fact]
-    public void IsHaAllowed_WithAllowlist_ReturnsFalseForNotAllowed()
+    public void IsHaAllowed_NotInAllowlist_ReturnsTrue()
     {
-        // Arrange
+        // Arrange - HA ID allowlist feature is disabled by design.
+        // IsHaAllowed() always returns true regardless of allowlist configuration.
         var configManager = new JsonConfigManager();
         var config = configManager.GetConfig();
         config.AllowedHaIds = new List<string> { "allowed-id-1", "allowed-id-2" };
@@ -163,7 +168,7 @@ public class SecurityManagerTests
         var isAllowed = securityManager.IsHaAllowed("not-allowed-id");
 
         // Assert
-        Assert.False(isAllowed);
+        Assert.True(isAllowed); // Always returns true - allowlist feature is disabled
     }
     
     // Helper class for testing

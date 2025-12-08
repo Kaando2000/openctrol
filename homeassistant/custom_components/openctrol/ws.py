@@ -734,6 +734,9 @@ class OpenctrolWsClient:
             else:
                 # Session-based endpoint format: {"type": "key", "key_code": ..., "action": "down"}
                 # Send key down events: modifiers first, then main keys
+                # IMPORTANT: Since modifiers are sent first as physical keys, we should NOT
+                # set modifier flags for subsequent keys - the modifiers are already physically down.
+                # Setting flags would cause C# to inject synthetic modifiers again, causing double-injection.
                 all_keys_down = modifier_key_codes + main_keys
                 
                 for key_code in all_keys_down:
@@ -742,20 +745,15 @@ class OpenctrolWsClient:
                         "key_code": key_code,
                         "action": "down",
                     }
-                    # Add modifier flags, but exclude the flag for the key being pressed itself
-                    # (e.g., don't set ctrl:true when pressing CTRL key)
-                    if modifier_flags["ctrl"] and key_code != VK_CONTROL:
-                        message["ctrl"] = True
-                    if modifier_flags["alt"] and key_code != VK_MENU:
-                        message["alt"] = True
-                    if modifier_flags["shift"] and key_code != VK_SHIFT:
-                        message["shift"] = True
-                    if modifier_flags["win"] and key_code != VK_LWIN:
-                        message["win"] = True
+                    # Do NOT set modifier flags here - modifiers are already physically pressed
+                    # Setting flags would cause redundant injection in C# InputDispatcher
+                    # The C# side will see the physical modifier keys that were sent first
                     
                     await self._ws.send_str(json.dumps(message))
                 
                 # Send key up events in reverse order: main keys first, then modifiers
+                # IMPORTANT: Do NOT set modifier flags for up events either - modifiers are
+                # still physically down until they are released, so no flags needed
                 all_keys_up = list(reversed(main_keys)) + list(reversed(modifier_key_codes))
                 
                 for key_code in all_keys_up:
@@ -764,18 +762,8 @@ class OpenctrolWsClient:
                         "key_code": key_code,
                         "action": "up",
                     }
-                    # Add modifier flags, but exclude the flag for the key being released itself
-                    # For up events, we need to check if OTHER modifiers are still held
-                    # Since we're releasing in reverse order, modifiers are released last,
-                    # so we should include flags for modifiers that are still held
-                    if modifier_flags["ctrl"] and key_code != VK_CONTROL:
-                        message["ctrl"] = True
-                    if modifier_flags["alt"] and key_code != VK_MENU:
-                        message["alt"] = True
-                    if modifier_flags["shift"] and key_code != VK_SHIFT:
-                        message["shift"] = True
-                    if modifier_flags["win"] and key_code != VK_LWIN:
-                        message["win"] = True
+                    # Do NOT set modifier flags here - modifiers are still physically pressed
+                    # until they are released. Setting flags would cause redundant injection.
                     
                     message_json = json.dumps(message)
                     await self._ws.send_str(message_json)

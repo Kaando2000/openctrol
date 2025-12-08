@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
@@ -381,15 +382,41 @@ internal sealed class CrossSessionCaptureContext : IDisposable
             return null;
         }
 
+        // Estimate buffer size: width * height * 3 bytes per pixel * compression ratio (assume ~0.1 for JPEG)
+        // Add 10KB overhead for JPEG headers and safety margin
+        int estimatedSize = (bitmap.Width * bitmap.Height * 3 / 10) + 10240;
+        // Cap at reasonable maximum (10MB) to avoid excessive allocations
+        estimatedSize = Math.Min(estimatedSize, 10 * 1024 * 1024);
+        // Ensure minimum size
+        estimatedSize = Math.Max(estimatedSize, 64 * 1024);
+
+        byte[]? rentedBuffer = null;
         try
         {
-            using var ms = new MemoryStream();
+            // Rent buffer from ArrayPool to reduce GC pressure
+            rentedBuffer = ArrayPool<byte>.Shared.Rent(estimatedSize);
+            
+            using var ms = new MemoryStream(rentedBuffer, 0, rentedBuffer.Length, true, true);
             bitmap.Save(ms, _jpegEncoder, _encoderParameters);
-            return ms.ToArray();
+            
+            // Copy only the used portion to a new array (required for return value)
+            // This is still better than ToArray() on a growing stream because we avoid
+            // multiple reallocations during encoding
+            var result = new byte[ms.Position];
+            Buffer.BlockCopy(rentedBuffer, 0, result, 0, (int)ms.Position);
+            return result;
         }
         catch
         {
             return null;
+        }
+        finally
+        {
+            // Return buffer to pool
+            if (rentedBuffer != null)
+            {
+                ArrayPool<byte>.Shared.Return(rentedBuffer);
+            }
         }
     }
 

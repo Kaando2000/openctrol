@@ -383,19 +383,59 @@ public sealed class AudioManager : IAudioManager
             }
 
             // Attempt to route session using Windows API
-            // Note: SetDefaultEndpointForId is the correct API for per-app routing in Windows 10+
-            // However, we cannot verify the routing actually took effect via the API
-            // The routing will be reflected in GetState() on the next call if successful
-            var policyConfig = (IPolicyConfig)new PolicyConfigClient();
-            var hr = policyConfig.SetDefaultEndpointForId(foundSessionInstanceId, deviceId, Role.Multimedia);
-            
-            if (hr != 0)
+            // Try IPolicyConfigVista first (has SetDefaultEndpointForId), fall back to IPolicyConfig if vtable mismatch
+            bool routingSuccess = false;
+            try
             {
-                // COM call failed - per-app routing may not be supported or may have failed
-                throw new InvalidOperationException($"Failed to route session to device. Windows API returned error code: 0x{hr:X8}. Per-app audio routing may not be supported on this system.");
+                // Try to use IPolicyConfigVista which includes SetDefaultEndpointForId
+                // This may fail on some Windows builds if the vtable layout differs
+                var policyConfigVista = (IPolicyConfigVista)new PolicyConfigClient();
+                var hr = policyConfigVista.SetDefaultEndpointForId(foundSessionInstanceId, deviceId, Role.Multimedia);
+                
+                if (hr == 0)
+                {
+                    routingSuccess = true;
+                    _logger.Info($"Session {sessionId} ({foundSession.DisplayName}) routing requested to device: {device.FriendlyName} ({deviceId}) via SetDefaultEndpointForId.");
+                }
+                else
+                {
+                    _logger.Warn($"SetDefaultEndpointForId returned error code: 0x{hr:X8}. Falling back to SetDefaultEndpoint.");
+                }
+            }
+            catch (System.Runtime.InteropServices.SEHException)
+            {
+                // Vtable mismatch - SetDefaultEndpointForId doesn't exist at expected slot
+                // Note: ExecutionEngineException is obsolete in .NET 8+, using SEHException instead
+                _logger.Warn($"SetDefaultEndpointForId not available (vtable mismatch). Falling back to SetDefaultEndpoint (system-wide routing only).");
+            }
+            catch (AccessViolationException)
+            {
+                // Access violation indicates vtable issue
+                _logger.Warn($"SetDefaultEndpointForId caused access violation (vtable mismatch). Falling back to SetDefaultEndpoint (system-wide routing only).");
+            }
+            catch (COMException comEx)
+            {
+                // COM error - may indicate vtable issue or other COM problem
+                _logger.Warn($"SetDefaultEndpointForId COM error: {comEx.Message}. Falling back to SetDefaultEndpoint (system-wide routing only).");
             }
 
-            _logger.Info($"Session {sessionId} ({foundSession.DisplayName}) routing requested to device: {device.FriendlyName} ({deviceId}). Note: Routing cannot be verified via API and will be reflected in GetState() if successful.");
+            // Fallback to system-wide default device change if per-app routing failed
+            if (!routingSuccess)
+            {
+                var policyConfig = (IPolicyConfig)new PolicyConfigClient();
+                var hr1 = policyConfig.SetDefaultEndpoint(deviceId, Role.Multimedia);
+                var hr2 = policyConfig.SetDefaultEndpoint(deviceId, Role.Console);
+                
+                if (hr1 == 0 && hr2 == 0)
+                {
+                    _logger.Info($"Session {sessionId} routing: Per-app routing not available. Changed system-wide default device to: {device.FriendlyName} ({deviceId}).");
+                    // Note: This changes the default for ALL applications, not just this session
+                }
+                else
+                {
+                    throw new InvalidOperationException($"Failed to route session to device. SetDefaultEndpoint returned error codes: Multimedia=0x{hr1:X8}, Console=0x{hr2:X8}. Per-app audio routing may not be supported on this system.");
+                }
+            }
         }
         catch (COMException ex)
         {
@@ -425,6 +465,47 @@ public sealed class AudioManager : IAudioManager
     [Guid("F8679F50-850A-41CF-9C72-430F290190C8")]
     [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
     internal interface IPolicyConfig
+    {
+        [PreserveSig]
+        int GetMixFormat(string pszDeviceName, out IntPtr ppFormat);
+
+        [PreserveSig]
+        int GetDeviceFormat(string pszDeviceName, bool bDefault, out IntPtr ppFormat);
+
+        [PreserveSig]
+        int SetDeviceFormat(string pszDeviceName, IntPtr pEndpointFormat, IntPtr pMixFormat);
+
+        [PreserveSig]
+        int GetProcessingPeriod(string pszDeviceName, bool bDefault, out IntPtr pDefaultPeriod, out IntPtr pMinimumPeriod);
+
+        [PreserveSig]
+        int SetProcessingPeriod(string pszDeviceName, IntPtr pPeriod);
+
+        [PreserveSig]
+        int GetShareMode(string pszDeviceName, out IntPtr pShareMode);
+
+        [PreserveSig]
+        int SetShareMode(string pszDeviceName, IntPtr pShareMode);
+
+        [PreserveSig]
+        int GetPropertyValue(string pszDeviceName, IntPtr key, out IntPtr pv);
+
+        [PreserveSig]
+        int SetPropertyValue(string pszDeviceName, IntPtr key, IntPtr pv);
+
+        [PreserveSig]
+        int SetDefaultEndpoint(string pszDeviceName, Role role);
+
+        [PreserveSig]
+        int SetEndpointVisibility(string pszDeviceName, bool bVisible);
+    }
+
+    // Separate interface for SetDefaultEndpointForId to avoid vtable issues
+    // This method may not exist at the expected vtable slot on all Windows versions
+    [ComImport]
+    [Guid("F8679F50-850A-41CF-9C72-430F290190C8")]
+    [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    internal interface IPolicyConfigVista
     {
         [PreserveSig]
         int GetMixFormat(string pszDeviceName, out IntPtr ppFormat);

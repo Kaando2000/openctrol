@@ -133,22 +133,31 @@ public sealed class SystemStateMonitor : ISystemStateMonitor, IDisposable
             }
 
             // Check if desktop is locked
+            // Locked desktop typically shows as "Winlogon" desktop
             var hCurrentDesktop = GetThreadDesktop(GetCurrentThreadId());
             if (hCurrentDesktop != IntPtr.Zero)
             {
                 var desktopName = GetDesktopName(hCurrentDesktop);
-                if (desktopName == "Screen-saver" || desktopName == "Winlogon")
+                // "Winlogon" desktop indicates locked state (not just login screen)
+                // "Screen-saver" indicates screensaver is active (which typically indicates lock)
+                if (desktopName == "Screen-saver")
                 {
+                    // Screensaver is active, which typically means the desktop is locked
                     return DesktopState.Locked;
                 }
-            }
-
-            // Check if session is locked using SystemParametersInfo
-            var isLocked = false;
-            SystemParametersInfo(SPI_GETSCREENSAVERRUNNING, 0, ref isLocked, 0);
-            if (isLocked)
-            {
-                return DesktopState.Locked;
+                else if (desktopName == "Winlogon")
+                {
+                    // Additional check: if we can open Winlogon desktop and it's the current desktop,
+                    // and we already checked it's not login screen, then it's locked
+                    var hWinlogonDesktop = OpenDesktop("Winlogon", 0, false, DESKTOP_READOBJECTS);
+                    if (hWinlogonDesktop != IntPtr.Zero)
+                    {
+                        CloseDesktop(hWinlogonDesktop);
+                        // If current desktop is Winlogon and we already checked it's not login screen,
+                        // then it's locked
+                        return DesktopState.Locked;
+                    }
+                }
             }
 
             // Default to Desktop

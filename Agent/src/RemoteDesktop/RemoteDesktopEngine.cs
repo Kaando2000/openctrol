@@ -876,7 +876,8 @@ public sealed class RemoteDesktopEngine : IRemoteDesktopEngine
                         _lastFrameAt = DateTimeOffset.UtcNow;
                         _isDegraded = false; // Reset degraded state on successful capture
                     }
-                    _sequenceNumber++;
+                    // Use Interlocked for thread-safe increment (defensive programming)
+                    Interlocked.Increment(ref _sequenceNumber);
 
                     NotifySubscribers(frame);
                 }

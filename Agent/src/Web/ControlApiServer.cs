@@ -1186,10 +1186,11 @@ public sealed class ControlApiServer : IControlApiServer
                 {
                     using var client = new System.Net.Sockets.TcpClient();
                     using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-                    timeoutCts.CancelAfter(TimeSpan.FromSeconds(2));
+                    var timeoutDuration = TimeSpan.FromSeconds(2);
+                    timeoutCts.CancelAfter(timeoutDuration);
                     
                     var connectTask = client.ConnectAsync(IPAddress.Loopback, config.HttpPort);
-                    var timeoutTask = Task.Delay(Timeout.Infinite, timeoutCts.Token);
+                    var timeoutTask = Task.Delay(timeoutDuration, timeoutCts.Token);
                     
                     var completedTask = await Task.WhenAny(connectTask, timeoutTask);
                     

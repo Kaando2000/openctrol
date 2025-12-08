@@ -211,9 +211,35 @@ public sealed class JsonConfigManager : IConfigManager
                     return config;
                 }
             }
-            catch
+            catch (JsonException ex)
             {
-                // Fall through to create default
+                // Log JSON parsing errors to help diagnose config file corruption
+                // Note: We can't use _logger here as this is called during construction
+                // Fall through to create default config
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent",
+                        $"Failed to parse config file {_configPath}: {ex.Message}. Creating default config.",
+                        System.Diagnostics.EventLogEntryType.Warning);
+                }
+                catch
+                {
+                    // If EventLog write fails, continue silently
+                }
+            }
+            catch (Exception ex)
+            {
+                // Log other errors (file access, etc.)
+                try
+                {
+                    System.Diagnostics.EventLog.WriteEntry("OpenctrolAgent",
+                        $"Error loading config file {_configPath}: {ex.Message}. Creating default config.",
+                        System.Diagnostics.EventLogEntryType.Warning);
+                }
+                catch
+                {
+                    // If EventLog write fails, continue silently
+                }
             }
         }
 

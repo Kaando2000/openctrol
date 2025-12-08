@@ -207,7 +207,107 @@ public sealed class InputDispatcher
         try
         {
             // Get virtual desktop bounds (all monitors combined)
-            var virtualDesktop = System.Windows.Forms.Screen.AllScreens;
+            // Try Screen.AllScreens first, fall back to EnumDisplayMonitors if it fails
+            System.Windows.Forms.Screen[]? virtualDesktop = null;
+            try
+            {
+                // Execute within active desktop context if available
+                SystemStateSnapshot? systemState = null;
+                if (_systemStateMonitor != null)
+                {
+                    systemState = _systemStateMonitor.GetCurrent();
+                }
+
+                if (_desktopContextSwitcher != null)
+                {
+                    virtualDesktop = _desktopContextSwitcher.ExecuteInActiveDesktopContext(
+                        () => System.Windows.Forms.Screen.AllScreens,
+                        systemState) ?? Array.Empty<System.Windows.Forms.Screen>();
+                }
+                else
+                {
+                    virtualDesktop = System.Windows.Forms.Screen.AllScreens;
+                }
+            }
+            catch (Exception screenEx)
+            {
+                _logger.Debug($"[Input] Screen.AllScreens failed: {screenEx.Message}. Falling back to EnumDisplayMonitors.");
+                virtualDesktop = null;
+            }
+
+            // Fallback to EnumDisplayMonitors if Screen.AllScreens failed or returned no screens
+            if (virtualDesktop == null || virtualDesktop.Length == 0)
+            {
+                var win32Monitors = EnumerateMonitorsWin32();
+                if (win32Monitors.Count > 0)
+                {
+                    // Use MonitorInfo directly for calculations (no need for Screen objects)
+                    var selectedMonitor = win32Monitors.FirstOrDefault(m => m.Id == _currentMonitorId);
+                    if (selectedMonitor == null)
+                    {
+                        selectedMonitor = win32Monitors.FirstOrDefault(m => m.IsPrimary) ?? win32Monitors.FirstOrDefault();
+                    }
+
+                    if (selectedMonitor == null)
+                    {
+                        _logger.Warn("[Input] No monitors available for absolute mouse positioning");
+                        return;
+                    }
+
+                    // Use MonitorInfo directly for calculations
+                    var fallbackNormalizedX = Math.Clamp(x, 0, 65535);
+                    var fallbackNormalizedY = Math.Clamp(y, 0, 65535);
+
+                    var fallbackPixelX = (int)((fallbackNormalizedX / 65535.0) * selectedMonitor.Width);
+                    var fallbackPixelY = (int)((fallbackNormalizedY / 65535.0) * selectedMonitor.Height);
+                    
+                    var fallbackVirtualX = selectedMonitor.X + fallbackPixelX;
+                    var fallbackVirtualY = selectedMonitor.Y + fallbackPixelY;
+
+                    var fallbackMinX = win32Monitors.Min(m => m.X);
+                    var fallbackMinY = win32Monitors.Min(m => m.Y);
+                    var fallbackMaxX = win32Monitors.Max(m => m.X + m.Width);
+                    var fallbackMaxY = win32Monitors.Max(m => m.Y + m.Height);
+                    var fallbackVirtualWidth = fallbackMaxX - fallbackMinX;
+                    var fallbackVirtualHeight = fallbackMaxY - fallbackMinY;
+
+                    if (fallbackVirtualWidth <= 0 || fallbackVirtualHeight <= 0)
+                    {
+                        _logger.Warn("[Input] Invalid virtual desktop dimensions");
+                        return;
+                    }
+
+                    var fallbackFinalNormalizedX = (int)(((double)(fallbackVirtualX - fallbackMinX) / fallbackVirtualWidth) * 65535);
+                    var fallbackFinalNormalizedY = (int)(((double)(fallbackVirtualY - fallbackMinY) / fallbackVirtualHeight) * 65535);
+
+                    fallbackFinalNormalizedX = Math.Max(0, Math.Min(65535, fallbackFinalNormalizedX));
+                    fallbackFinalNormalizedY = Math.Max(0, Math.Min(65535, fallbackFinalNormalizedY));
+
+                    var fallbackInput = new INPUT
+                    {
+                        type = INPUT_TYPE.MOUSE,
+                        u = new InputUnion
+                        {
+                            mi = new MOUSEINPUT
+                            {
+                                dx = fallbackFinalNormalizedX,
+                                dy = fallbackFinalNormalizedY,
+                                dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE | MOUSEEVENTF.VIRTUALDESKTOP,
+                                dwExtraInfo = IntPtr.Zero
+                            }
+                        }
+                    };
+
+                    SendInput(1, new[] { fallbackInput }, Marshal.SizeOf<INPUT>());
+                    return;
+                }
+                else
+                {
+                    _logger.Warn("[Input] No screens available for absolute mouse positioning");
+                    return;
+                }
+            }
+
             if (virtualDesktop.Length == 0)
             {
                 _logger.Warn("[Input] No screens available for absolute mouse positioning");
@@ -294,7 +394,7 @@ public sealed class InputDispatcher
                     {
                         dx = finalNormalizedX,
                         dy = finalNormalizedY,
-                        dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE,
+                        dwFlags = MOUSEEVENTF.MOVE | MOUSEEVENTF.ABSOLUTE | MOUSEEVENTF.VIRTUALDESKTOP,
                         dwExtraInfo = IntPtr.Zero
                     }
                 }
@@ -306,6 +406,77 @@ public sealed class InputDispatcher
         {
             _logger.Error($"[Input] Error in absolute mouse positioning: {ex.Message}", ex);
         }
+    }
+
+    private List<MonitorInfo> EnumerateMonitorsWin32()
+    {
+        var monitors = new List<MonitorInfo>();
+        var monitorDataList = new List<(RECT Bounds, bool IsPrimary, int Index)>();
+
+        try
+        {
+            bool enumResult = EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData) =>
+            {
+                MONITORINFOEX monitorInfo = new MONITORINFOEX
+                {
+                    Size = Marshal.SizeOf(typeof(MONITORINFOEX)),
+                    DeviceName = new string('\0', 32)
+                };
+                
+                if (GetMonitorInfo(hMonitor, ref monitorInfo))
+                {
+                    string deviceName = monitorInfo.DeviceName?.TrimEnd('\0') ?? $"Monitor_{monitorDataList.Count + 1}";
+                    int width = monitorInfo.Monitor.Right - monitorInfo.Monitor.Left;
+                    int height = monitorInfo.Monitor.Bottom - monitorInfo.Monitor.Top;
+                    
+                    if (width > 0 && height > 0)
+                    {
+                        monitorDataList.Add((
+                            monitorInfo.Monitor,
+                            (monitorInfo.Flags & MONITORINFOF_PRIMARY) != 0,
+                            monitorDataList.Count
+                        ));
+                    }
+                }
+                return true;
+            }, IntPtr.Zero);
+
+            if (!enumResult)
+            {
+                int error = Marshal.GetLastWin32Error();
+                _logger.Debug($"[Input] EnumDisplayMonitors failed with error code: {error}");
+            }
+
+            // Sort by primary first, then by position
+            monitorDataList = monitorDataList.OrderBy(m => m.IsPrimary ? 0 : 1)
+                                            .ThenBy(m => m.Bounds.Left)
+                                            .ThenBy(m => m.Bounds.Top)
+                                            .ToList();
+
+            for (int i = 0; i < monitorDataList.Count; i++)
+            {
+                var monitorData = monitorDataList[i];
+                int width = monitorData.Bounds.Right - monitorData.Bounds.Left;
+                int height = monitorData.Bounds.Bottom - monitorData.Bounds.Top;
+                
+                monitors.Add(new MonitorInfo
+                {
+                    Id = $"DISPLAY{i + 1}",
+                    Name = $"Display {i + 1}",
+                    Width = width,
+                    Height = height,
+                    X = monitorData.Bounds.Left,
+                    Y = monitorData.Bounds.Top,
+                    IsPrimary = monitorData.IsPrimary
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.Debug($"[Input] Error enumerating monitors using Win32 API: {ex.Message}");
+        }
+
+        return monitors;
     }
 
     private void SendMouseButton(MouseButton button, bool down)
@@ -538,6 +709,62 @@ public sealed class InputDispatcher
     [DllImport("user32.dll")]
     private static extern IntPtr GetKeyboardLayout(uint idThread);
 
+    // Monitor enumeration P/Invoke declarations
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc lpfnEnum, IntPtr dwData);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFOEX lpmi);
+
+    [DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int nIndex);
+
+    private const int SM_CXSCREEN = 0;
+    private const int SM_CYSCREEN = 1;
+    private const int MONITORINFOF_PRIMARY = 0x00000001;
+
+    private delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdcMonitor, ref RECT lprcMonitor, IntPtr dwData);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Auto)]
+    private struct MONITORINFOEX
+    {
+        public int Size;
+        public RECT Monitor;
+        public RECT WorkArea;
+        public int Flags;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)]
+        public string DeviceName;
+        
+        public MONITORINFOEX()
+        {
+            Size = 0;
+            Monitor = new RECT();
+            WorkArea = new RECT();
+            Flags = 0;
+            DeviceName = string.Empty;
+        }
+    }
+
+    private class MonitorInfo
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public int X { get; set; }
+        public int Y { get; set; }
+        public bool IsPrimary { get; set; }
+    }
+
     // Constants
     private const int VK_CONTROL = 0x11;
     private const int VK_MENU = 0x12; // Alt
@@ -601,7 +828,8 @@ public sealed class InputDispatcher
         MIDDLEUP = 0x0040,
         WHEEL = 0x0800,
         HWHEEL = 0x1000,
-        ABSOLUTE = 0x8000
+        ABSOLUTE = 0x8000,
+        VIRTUALDESKTOP = 0x4000
     }
 
     [Flags]

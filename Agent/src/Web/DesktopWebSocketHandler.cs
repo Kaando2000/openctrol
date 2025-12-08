@@ -291,7 +291,8 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             {
                 // Accumulate message chunks until EndOfMessage
                 // This handles messages that span multiple ReceiveAsync calls
-                var messageBuffer = new List<byte>();
+                // Pre-allocate with estimated capacity to reduce reallocations
+                var messageBuffer = new List<byte>(4096);
                 var totalSize = 0; // Track cumulative message size for limit enforcement
                 WebSocketReceiveResult result;
 
@@ -338,8 +339,12 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                         return; // Exit receive loop - connection is closed
                     }
 
-                    // Accumulate message chunks
-                    messageBuffer.AddRange(buffer.Take(result.Count));
+                    // Accumulate message chunks using efficient array copy instead of AddRange with Take
+                    // This avoids creating enumerators and is more performant
+                    // Copy chunk to temporary array, then add to list
+                    var chunk = new byte[result.Count];
+                    Buffer.BlockCopy(buffer, 0, chunk, 0, result.Count);
+                    messageBuffer.AddRange(chunk);
 
                 } while (!result.EndOfMessage); // Continue until complete message received
 
