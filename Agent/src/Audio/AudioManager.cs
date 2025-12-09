@@ -376,7 +376,7 @@ public sealed class AudioManager : IAudioManager
                 throw new ArgumentException($"Audio session not found: {sessionId}", nameof(sessionId));
             }
 
-            if (string.IsNullOrEmpty(foundSessionInstanceId))
+            if (string.IsNullOrWhiteSpace(foundSessionInstanceId))
             {
                 // Cannot route - session instance ID is required for per-app routing
                 throw new NotSupportedException($"Per-app audio routing is not supported for session {sessionId}. The session does not provide a valid instance identifier.");

@@ -12,6 +12,12 @@ public sealed class InputDispatcher
     private readonly DesktopContextSwitcher _desktopContextSwitcher;
     private readonly object _lock = new();
     private string _currentMonitorId = "DISPLAY1"; // Track current monitor for absolute positioning
+    
+    // Cache for monitor enumeration to avoid repeated expensive Win32 API calls
+    private static List<MonitorInfo>? _cachedMonitors = null;
+    private static DateTime _cacheTimestamp = DateTime.MinValue;
+    private static readonly TimeSpan CacheTimeout = TimeSpan.FromSeconds(5);
+    private static readonly object _cacheLock = new();
 
     public InputDispatcher(ILogger logger, ISystemStateMonitor? systemStateMonitor = null)
     {
@@ -204,6 +210,14 @@ public sealed class InputDispatcher
         // Coordinates from client are normalized 0-65535 values that map to the selected monitor
         // Map these normalized coordinates to the selected monitor's virtual screen bounds
         
+        // Capture _currentMonitorId inside lock to prevent race condition
+        // This ensures consistent monitor selection for both fallback and main paths
+        string currentMonitorId;
+        lock (_lock)
+        {
+            currentMonitorId = _currentMonitorId;
+        }
+        
         try
         {
             // Get virtual desktop bounds (all monitors combined)
@@ -242,7 +256,8 @@ public sealed class InputDispatcher
                 if (win32Monitors.Count > 0)
                 {
                     // Use MonitorInfo directly for calculations (no need for Screen objects)
-                    var selectedMonitor = win32Monitors.FirstOrDefault(m => m.Id == _currentMonitorId);
+                    // Use captured currentMonitorId instead of _currentMonitorId to avoid race condition
+                    var selectedMonitor = win32Monitors.FirstOrDefault(m => m.Id == currentMonitorId);
                     if (selectedMonitor == null)
                     {
                         selectedMonitor = win32Monitors.FirstOrDefault(m => m.IsPrimary) ?? win32Monitors.FirstOrDefault();
@@ -315,32 +330,27 @@ public sealed class InputDispatcher
             }
 
             // Get the currently selected monitor
+            // Use captured currentMonitorId instead of _currentMonitorId to avoid race condition
             System.Windows.Forms.Screen selectedScreen;
-            lock (_lock)
+            var displayNumber = 1;
+            if (currentMonitorId.StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase))
             {
-                // Find the screen matching the current monitor ID
-                // Monitor IDs are typically like "DISPLAY1", "DISPLAY2", etc.
-                // Extract display number from ID (e.g., "DISPLAY1" -> 1, "DISPLAY2" -> 2)
-                var displayNumber = 1;
-                if (_currentMonitorId.StartsWith("DISPLAY", StringComparison.OrdinalIgnoreCase))
+                var numberPart = currentMonitorId.Substring(7); // Skip "DISPLAY"
+                if (int.TryParse(numberPart, out var num))
                 {
-                    var numberPart = _currentMonitorId.Substring(7); // Skip "DISPLAY"
-                    if (int.TryParse(numberPart, out var num))
-                    {
-                        displayNumber = num;
-                    }
+                    displayNumber = num;
                 }
-                
-                // Match by index (DISPLAY1 = index 0, DISPLAY2 = index 1, etc.)
-                if (displayNumber >= 1 && displayNumber <= virtualDesktop.Length)
-                {
-                    selectedScreen = virtualDesktop[displayNumber - 1];
-                }
-                else
-                {
-                    // Fallback to primary or first screen
-                    selectedScreen = System.Windows.Forms.Screen.PrimaryScreen ?? virtualDesktop[0];
-                }
+            }
+            
+            // Match by index (DISPLAY1 = index 0, DISPLAY2 = index 1, etc.)
+            if (displayNumber >= 1 && displayNumber <= virtualDesktop.Length)
+            {
+                selectedScreen = virtualDesktop[displayNumber - 1];
+            }
+            else
+            {
+                // Fallback to primary or first screen
+                selectedScreen = System.Windows.Forms.Screen.PrimaryScreen ?? virtualDesktop[0];
             }
 
             // Input coordinates are normalized 0-65535 values
@@ -410,6 +420,15 @@ public sealed class InputDispatcher
 
     private List<MonitorInfo> EnumerateMonitorsWin32()
     {
+        // Check cache first to avoid expensive API calls
+        lock (_cacheLock)
+        {
+            if (_cachedMonitors != null && DateTime.UtcNow - _cacheTimestamp < CacheTimeout)
+            {
+                return _cachedMonitors;
+            }
+        }
+        
         var monitors = new List<MonitorInfo>();
         var monitorDataList = new List<(RECT Bounds, bool IsPrimary, int Index)>();
 
@@ -476,6 +495,13 @@ public sealed class InputDispatcher
             _logger.Debug($"[Input] Error enumerating monitors using Win32 API: {ex.Message}");
         }
 
+        // Update cache
+        lock (_cacheLock)
+        {
+            _cachedMonitors = monitors;
+            _cacheTimestamp = DateTime.UtcNow;
+        }
+        
         return monitors;
     }
 

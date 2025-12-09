@@ -28,6 +28,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     
     // Input rate limiting: max 1000 events per second per session
     private const int MaxInputEventsPerSecond = 1000;
+    private const int MaxRateLimitQueueSize = 2000; // 2 seconds worth at max rate (1000/sec * 2)
     private readonly Queue<DateTime> _inputEventTimestamps = new();
     private readonly object _rateLimitLock = new();
 
@@ -171,10 +172,11 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
                 }
 
                 // Use semaphore to ensure only one send at a time (backpressure strategy)
-                // If a send is in progress, skip this frame (drop it)
-                if (!await _sendLock.WaitAsync(0, cancellationToken))
+                // Wait briefly (5ms) before dropping frame to allow ongoing send to complete
+                // This reduces unnecessary frame drops while still maintaining backpressure
+                if (!await _sendLock.WaitAsync(TimeSpan.FromMilliseconds(5), cancellationToken))
                 {
-                    // Send is in progress, drop this frame
+                    // Send is taking too long or cancelled, drop this frame to prevent queue buildup
                     continue;
                 }
 
@@ -493,6 +495,7 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
     /// <summary>
     /// Checks if input event is within rate limit (sliding window: max N events per second).
     /// Returns true if event should be processed, false if rate limit exceeded.
+    /// Includes emergency cleanup to prevent unbounded queue growth.
     /// </summary>
     private bool CheckInputRateLimit()
     {
@@ -505,6 +508,17 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             while (_inputEventTimestamps.Count > 0 && _inputEventTimestamps.Peek() < windowStart)
             {
                 _inputEventTimestamps.Dequeue();
+            }
+
+            // Emergency cleanup if queue gets too large (prevents memory exhaustion under attack)
+            if (_inputEventTimestamps.Count > MaxRateLimitQueueSize)
+            {
+                // Remove oldest entries to bring it down to half the max size
+                while (_inputEventTimestamps.Count > MaxRateLimitQueueSize / 2)
+                {
+                    _inputEventTimestamps.Dequeue();
+                }
+                _logger.Warn($"[WebSocket] Rate limit queue exceeded max size, emergency cleanup performed for session {_sessionId}");
             }
 
             // Check if we're at the limit
@@ -530,15 +544,27 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
             PointerEvent evt;
             if (absolute && root.TryGetProperty("x", out var xEl) && root.TryGetProperty("y", out var yEl))
             {
+                // Validate absolute coordinates (normalized 0-65535 range for Windows SendInput)
+                var x = xEl.GetInt32();
+                var y = yEl.GetInt32();
+                
+                // Clamp to valid normalized range
+                x = Math.Clamp(x, 0, 65535);
+                y = Math.Clamp(y, 0, 65535);
+                
                 evt = new PointerEvent
                 {
                     Kind = PointerEventKind.MoveAbsolute,
-                    AbsoluteX = xEl.GetInt32(),
-                    AbsoluteY = yEl.GetInt32()
+                    AbsoluteX = x,
+                    AbsoluteY = y
                 };
             }
             else
             {
+                // Validate relative move coordinates (Windows SendInput limit is ±32767)
+                dx = Math.Clamp(dx, -32767, 32767);
+                dy = Math.Clamp(dy, -32767, 32767);
+                
                 evt = new PointerEvent
                 {
                     Kind = PointerEventKind.MoveRelative,
@@ -606,6 +632,10 @@ public sealed class DesktopWebSocketHandler : IFrameSubscriber
         {
             var deltaX = root.TryGetProperty("delta_x", out var dxEl) ? dxEl.GetInt32() : 0;
             var deltaY = root.TryGetProperty("delta_y", out var dyEl) ? dyEl.GetInt32() : 0;
+
+            // Validate wheel delta values (Windows SendInput expects range -32768 to 32767)
+            deltaX = Math.Clamp(deltaX, -32768, 32767);
+            deltaY = Math.Clamp(deltaY, -32768, 32767);
 
             if (deltaX != 0 || deltaY != 0)
             {

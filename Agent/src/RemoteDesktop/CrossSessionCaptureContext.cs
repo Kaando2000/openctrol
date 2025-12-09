@@ -384,11 +384,14 @@ internal sealed class CrossSessionCaptureContext : IDisposable
 
         // Estimate buffer size: width * height * 3 bytes per pixel * compression ratio (assume ~0.1 for JPEG)
         // Add 10KB overhead for JPEG headers and safety margin
-        int estimatedSize = (bitmap.Width * bitmap.Height * 3 / 10) + 10240;
+        // Use long for calculation to prevent integer overflow on very large displays
+        long estimatedSizeLong = ((long)bitmap.Width * bitmap.Height * 3 / 10) + 10240;
         // Cap at reasonable maximum (10MB) to avoid excessive allocations
-        estimatedSize = Math.Min(estimatedSize, 10 * 1024 * 1024);
+        estimatedSizeLong = Math.Min(estimatedSizeLong, 10 * 1024 * 1024L);
         // Ensure minimum size
-        estimatedSize = Math.Max(estimatedSize, 64 * 1024);
+        estimatedSizeLong = Math.Max(estimatedSizeLong, 64 * 1024L);
+        // Cast to int (safe after clamping)
+        int estimatedSize = estimatedSizeLong > int.MaxValue ? int.MaxValue : (int)estimatedSizeLong;
 
         byte[]? rentedBuffer = null;
         try
