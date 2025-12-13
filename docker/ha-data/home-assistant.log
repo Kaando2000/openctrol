@@ -1,38 +1,4 @@
-2025-12-07 16:08:20.152 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
-2025-12-07 16:08:20.943 WARNING (Recorder) [homeassistant.components.recorder.util] The system could not validate that the sqlite3 database at //config/home-assistant_v2.db was shutdown cleanly
-2025-12-07 16:08:20.992 WARNING (Recorder) [homeassistant.components.recorder.util] Ended unfinished session (id=2 from 2025-12-07 16:06:46.704150)
-2025-12-07 16:08:29.123 ERROR (SyncWorker_3) [annotatedyaml.loader] mapping values are not allowed here
-  in "/config/custom_components/openctrol/services.yaml", line 199, column 52
-2025-12-07 16:08:29.123 WARNING (SyncWorker_3) [homeassistant.helpers.service] Unable to parse services.yaml for the openctrol integration: mapping values are not allowed here
-  in "/config/custom_components/openctrol/services.yaml", line 199, column 52
-2025-12-07 16:16:18.376 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-SyntaxError: Unexpected identifier 'Set'
- Unexpected identifier 'Set'::
-2025-12-07 16:16:20.285 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
-script": (src/common/dom/load_resource.ts:32:21)
-_load (src/common/dom/load_resource.ts:6:2)
-loadModule (src/common/dom/load_resource.ts:37:43)
-loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
-loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
-_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
-2025-12-07 16:17:52.380 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
-script": (src/common/dom/load_resource.ts:32:21)
-_load (src/common/dom/load_resource.ts:6:2)
-loadModule (src/common/dom/load_resource.ts:37:43)
-loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
-loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
-_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
-2025-12-07 16:18:06.272 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-SyntaxError: Unexpected identifier 'Set'
- Unexpected identifier 'Set'::
-2025-12-07 16:18:16.901 ERROR (MainThread) [frontend.js.modern.202511051] Uncaught error from Chrome 142.0.0.0 on Windows 10
-SyntaxError: Failed to execute 'appendChild' on 'Node': Unexpected identifier 'Set'
-script": (src/common/dom/load_resource.ts:32:21)
-_load (src/common/dom/load_resource.ts:6:2)
-loadModule (src/common/dom/load_resource.ts:37:43)
-loadCSS (src/panels/lovelace/common/load-resources.ts:34:19)
-loadLovelaceResources (src/panels/lovelace/common/load-resources.ts:13:12)
-_fetchConfig (src/panels/lovelace/ha-panel-lovelace.ts:367:45)
-2025-12-07 16:32:28.028 ERROR (MainThread) [custom_components.openctrol.sensor] Error requesting openctrol data: Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]
+2025-12-09 22:46:39.297 WARNING (SyncWorker_0) [homeassistant.loader] We found a custom integration openctrol which has not been tested by Home Assistant. This component might cause stability problems, be sure to disable it if you experience issues with Home Assistant
+2025-12-09 22:46:40.219 WARNING (Recorder) [homeassistant.components.recorder.util] The system could not validate that the sqlite3 database at //config/home-assistant_v2.db was shutdown cleanly
+2025-12-09 22:46:40.275 WARNING (Recorder) [homeassistant.components.recorder.util] Ended unfinished session (id=4 from 2025-12-09 01:02:54.680543)
+2025-12-09 22:46:44.318 WARNING (MainThread) [custom_components.openctrol.sensor] Initial coordinator refresh failed for entry 01KC0A5KXFS9JJXTRCGQWQPSDF (entity will still be created): Cannot connect to host 192.168.1.52:44325 ssl:default [Connect call failed ('192.168.1.52', 44325)]
